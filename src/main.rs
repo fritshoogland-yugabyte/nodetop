@@ -54,7 +54,7 @@ fn main() {
         diff_cpu_details(details, &mut host_presentation);
         for (hostname_port, row) in &host_presentation {
             let total_time = row.idle_diff+row.user_diff+row.system_diff+row.irq_diff+row.softirq_diff+row.iowait_diff+row.nice_diff+row.steal_diff+row.guest_user_diff+row.guest_nice_diff;
-            println!("{:30} {:5.0} {:5.0} | {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0}|{:3.0} {:3.0} | {:7.3} {:7.3} | {:6.3} {:6.3} {:6.3}",
+            println!("{:30} {:5.0} {:5.0} | {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} | {:3.0} {:3.0} | {:7.3} {:7.3} | {:6.3} {:6.3} {:6.3}",
                      hostname_port,
                      row.procs_running,
                      row.procs_blocked,
