@@ -27,7 +27,7 @@ fn main() {
 
     let mut host_presentation: BTreeMap<String, CpuPresentation> = BTreeMap::new();
 
-    println!("{:30} {:>5} {:>5}|{:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3}|{:3} {:3}|{:>7} {:>7} {:>7}|{:>6} {:>6} {:>6}",
+    println!("{:30} {:>5} {:>5}|{:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3}|{:3} {:3}|{:>7} {:>7}|{:>6} {:>6} {:>6}",
              "hostname",
              "r",
              "b",
@@ -41,7 +41,6 @@ fn main() {
              "st%",
              "gu%",
              "gn%",
-             "cpu rt",
              "scd rt",
              "scd wt",
              "l 1",
@@ -55,8 +54,7 @@ fn main() {
         diff_cpu_details(details, &mut host_presentation);
         for (hostname_port, row) in &host_presentation {
             let total_time = row.idle_diff+row.user_diff+row.system_diff+row.irq_diff+row.softirq_diff+row.iowait_diff+row.nice_diff+row.steal_diff+row.guest_user_diff+row.guest_nice_diff;
-            let active_time = row.user_diff+row.system_diff+row.irq_diff+row.softirq_diff+row.iowait_diff+row.nice_diff+row.steal_diff+row.guest_user_diff+row.guest_nice_diff;
-            println!("{:30} {:5.0} {:5.0}|{:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0}|{:3.0} {:3.0}|{:7.3} {:7.3} {:7.3}|{:6.3} {:6.3} {:6.3}",
+            println!("{:30} {:5.0} {:5.0}|{:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0}|{:3.0} {:3.0}|{:7.3} {:7.3}|{:6.3} {:6.3} {:6.3}",
                      hostname_port,
                      row.procs_running,
                      row.procs_blocked,
@@ -70,7 +68,6 @@ fn main() {
                      row.steal_diff/total_time*100.0,
                      row.guest_user_diff/total_time*100.0,
                      row.guest_nice_diff/total_time*100.0,
-                     active_time,
                      row.schedstat_running_diff,
                      row.schedstat_waiting_diff,
                      row.load_1,
