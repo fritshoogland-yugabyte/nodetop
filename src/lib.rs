@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local, Utc};
 use prometheus_parse::Value;
+use std::collections::{HashMap, BTreeMap};
 //use serde_derive::{Serialize,Deserialize};
 use port_scanner::scan_port_addr;
 use std::process;
@@ -29,11 +30,69 @@ pub struct StoredNodeExporterValues {
     pub node_exporter_value: f64,
 }
 
-pub fn read_node_exporter_into_vectors(
+#[derive(Debug)]
+pub struct CpuDetails {
+    pub hostname_port: String,
+    pub timestamp: DateTime<Utc>,
+    pub load_1: f64,
+    pub load_5: f64,
+    pub load_15: f64,
+    pub cpu_idle: f64,
+    pub cpu_irq: f64,
+    pub cpu_softirq: f64,
+    pub cpu_system: f64,
+    pub cpu_user: f64,
+    pub cpu_iowait: f64,
+    pub cpu_nice: f64,
+    pub cpu_steal: f64,
+    pub cpu_guest_nice: f64,
+    pub cpu_guest_user: f64,
+    pub schedstat_running: f64,
+    pub schedstat_waiting: f64,
+    pub procs_running: f64,
+    pub procs_blocked: f64,
+}
+
+#[derive(Debug)]
+pub struct CpuPresentation {
+    pub timestamp: DateTime<Utc>,
+    pub idle_diff: f64,
+    pub idle_counter: f64,
+    pub irq_diff: f64,
+    pub irq_counter: f64,
+    pub softirq_diff: f64,
+    pub softirq_counter: f64,
+    pub system_diff: f64,
+    pub system_counter: f64,
+    pub user_diff: f64,
+    pub user_counter: f64,
+    pub iowait_diff: f64,
+    pub iowait_counter: f64,
+    pub nice_diff: f64,
+    pub nice_counter: f64,
+    pub steal_diff: f64,
+    pub steal_counter: f64,
+    pub guest_nice_diff: f64,
+    pub guest_nice_counter: f64,
+    pub guest_user_diff: f64,
+    pub guest_user_counter: f64,
+    pub schedstat_running_diff: f64,
+    pub schedstat_running_counter: f64,
+    pub schedstat_waiting_diff: f64,
+    pub schedstat_waiting_counter: f64,
+    pub load_1: f64,
+    pub load_5: f64,
+    pub load_15: f64,
+    pub procs_running: f64,
+    pub procs_blocked: f64,
+}
+
+pub fn read_node_exporter_into_map(
     hosts: &Vec<&str>,
     ports: &Vec<&str>,
-    parallel: usize
-) -> Vec<StoredNodeExporterValues> {
+    parallel: usize,
+//) -> Vec<StoredNodeExporterValues> {
+) -> HashMap<String, Vec<NodeExporterValues>> {
     let pool = rayon::ThreadPoolBuilder::new().num_threads(parallel).build().unwrap();
     let (tx, rx) = channel();
     pool.scope(move |s| {
@@ -48,20 +107,22 @@ pub fn read_node_exporter_into_vectors(
             }
         }
     });
-    let mut stored_node_exporter_values: Vec<StoredNodeExporterValues> = Vec::new();
+    //let mut stored_node_exporter_values: Vec<StoredNodeExporterValues> = Vec::new();
+    let mut map_exporter_values: HashMap<String, Vec<NodeExporterValues>> = HashMap::new();
     for (hostname_port, _detail_snapshot_time, node_exporter_values) in rx {
-        add_to_node_exporter_vectors(node_exporter_values, &hostname_port, &mut stored_node_exporter_values);
+        //add_to_node_exporter_vectors(node_exporter_values, &hostname_port, &mut stored_node_exporter_values);
+        map_exporter_values.insert( hostname_port, node_exporter_values);
     }
-    stored_node_exporter_values
+    map_exporter_values
 }
 
 pub fn read_node_exporter(
     host: &str,
     port: &str,
 ) -> Vec<NodeExporterValues> {
-    if ! scan_port_addr(format!("{}:{}", host, port)) {
+    if !scan_port_addr(format!("{}:{}", host, port)) {
         println!("Warning! hostname:port {}:{} cannot be reached, skipping (node_exporter)", host, port);
-        return parse_node_exporter(String::from(""))
+        return parse_node_exporter(String::from(""));
     };
     let data_from_http = reqwest::blocking::get(format!("http://{}:{}/metrics", host, port))
         .unwrap_or_else(|e| {
@@ -72,7 +133,7 @@ pub fn read_node_exporter(
     parse_node_exporter(data_from_http)
 }
 
-fn parse_node_exporter( node_exporter_data: String ) -> Vec<NodeExporterValues> {
+fn parse_node_exporter(node_exporter_data: String) -> Vec<NodeExporterValues> {
     let lines: Vec<_> = node_exporter_data.lines().map(|s| Ok(s.to_owned())).collect();
     let node_exporter_rows = prometheus_parse::Scrape::parse(lines.into_iter()).unwrap();
     let mut nodeexportervalues = Vec::new();
@@ -100,7 +161,7 @@ fn parse_node_exporter( node_exporter_data: String ) -> Vec<NodeExporterValues> 
                             node_exporter_value: val,
                         }
                     )
-                },
+                }
                 Value::Gauge(val) => {
                     nodeexportervalues.push(
                         NodeExporterValues {
@@ -112,11 +173,11 @@ fn parse_node_exporter( node_exporter_data: String ) -> Vec<NodeExporterValues> 
                             node_exporter_value: val,
                         }
                     )
-                },
+                }
                 Value::Untyped(val) => {
                     // it turns out summary type _sum and _count values are untyped values.
                     // so I remove them here.
-                    if sample.metric.ends_with("_sum") || sample.metric.ends_with("_count") { continue };
+                    if sample.metric.ends_with("_sum") || sample.metric.ends_with("_count") { continue; };
                     // untyped: not sure what it is.
                     // I would say: probably a counter.
                     nodeexportervalues.push(
@@ -130,31 +191,10 @@ fn parse_node_exporter( node_exporter_data: String ) -> Vec<NodeExporterValues> 
 
                         }
                     )
-                },
-                Value::Histogram(_val) => {},
-                Value::Summary(_val) => {},
+                }
+                Value::Histogram(_val) => {}
+                Value::Summary(_val) => {}
             }
-        }
-        // post processing.
-        // anything that starts with process_ is node_exporter process
-        for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name.starts_with("process_")) {
-            record.node_exporter_category = "detail".to_string();
-        }
-        // anything that start with promhttp_ is the node_exporter http server
-        for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name.starts_with("promhttp_")) {
-            record.node_exporter_category = "detail".to_string();
-        }
-        // anything that starts with go_ are statistics about the node_exporter process
-        for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name.starts_with("go_")) {
-            record.node_exporter_category = "detail".to_string();
-        }
-        // anything that starts with node_scrape_collector is about the node_exporter scraper
-        for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name.starts_with("node_scrape_collector_")) {
-            record.node_exporter_category = "detail".to_string();
-        }
-        // any record that contains a label that contains 'dm-' is a specification of a block device, and not the block device itself
-        for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_labels.contains("dm-")) {
-            record.node_exporter_category = "detail".to_string();
         }
         // softnet: node_softnet_processed_total
         if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_softnet_processed_total").count() > 0 {
@@ -244,7 +284,32 @@ fn parse_node_exporter( node_exporter_data: String ) -> Vec<NodeExporterValues> 
                 node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_schedstat_running_seconds_total").map(|x| x.node_exporter_value).sum(),
             });
         }
-        // cpu_seconds_total:
+        // node_cpu_guest_seconds_total:
+        // I only see 'nice' and 'user', not sure why currently?
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            // user
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "node_cpu_guest_seconds_total".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "_user".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total").filter(|r| r.node_exporter_labels.contains("user")).map(|x| x.node_exporter_timestamp).min().unwrap(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total").filter(|r| r.node_exporter_labels.contains("user")).map(|x| x.node_exporter_value).sum(),
+            });
+            // nice
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "node_cpu_guest_seconds_total".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "_nice".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total").filter(|r| r.node_exporter_labels.contains("nice")).map(|x| x.node_exporter_timestamp).min().unwrap(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total").filter(|r| r.node_exporter_labels.contains("nice")).map(|x| x.node_exporter_value).sum(),
+            });
+        }
+        // node_cpu_seconds_total:
         if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total").count() > 0 {
             for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "node_cpu_seconds_total") {
                 record.node_exporter_category = "detail".to_string();
@@ -325,18 +390,126 @@ pub fn add_to_node_exporter_vectors(
     stored_node_exporter_values: &mut Vec<StoredNodeExporterValues>,
 ) {
     for row in node_exporter_values {
-        if row.node_exporter_value > 0.0 {
-            stored_node_exporter_values.push(
-                StoredNodeExporterValues {
-                    hostname_port: hostname.to_string(),
-                    timestamp: DateTime::from(row.node_exporter_timestamp),
-                    node_exporter_name: row.node_exporter_name.to_string(),
-                    node_exporter_type: row.node_exporter_type.to_string(),
-                    node_exporter_labels: row.node_exporter_labels.to_string(),
-                    node_exporter_category: row.node_exporter_category.to_string(),
-                    node_exporter_value: row.node_exporter_value,
+        stored_node_exporter_values.push(
+            StoredNodeExporterValues {
+                hostname_port: hostname.to_string(),
+                timestamp: DateTime::from(row.node_exporter_timestamp),
+                node_exporter_name: row.node_exporter_name.to_string(),
+                node_exporter_type: row.node_exporter_type.to_string(),
+                node_exporter_labels: row.node_exporter_labels.to_string(),
+                node_exporter_category: row.node_exporter_category.to_string(),
+                node_exporter_value: row.node_exporter_value,
+            }
+        );
+    }
+}
+
+pub fn cpu_details(
+    values: HashMap<String, Vec<NodeExporterValues>>
+) -> Vec<CpuDetails>
+{
+    let mut details: Vec<CpuDetails> = Vec::new();
+    for (hostname_port, node_exporter_vector) in values {
+        details.push( CpuDetails {
+            hostname_port: hostname_port,
+            timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
+            load_1: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            load_5: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load5").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            load_15: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load15").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_idle: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_idle" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_irq: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_irq" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_softirq: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_softirq" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_system: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_system" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_user: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_user" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_iowait: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_iowait" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_nice: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_nice" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_steal: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_steal" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_guest_user: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total" && r.node_exporter_labels == "_user" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            cpu_guest_nice: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total" && r.node_exporter_labels == "_nice" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            schedstat_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_running_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            schedstat_waiting: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_waiting_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            procs_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_running").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            procs_blocked: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_blocked").map(|x| x.node_exporter_value).nth(0).unwrap(),
+        });
+    }
+    details
+}
+
+pub fn diff_cpu_details(
+    values: Vec<CpuDetails>,
+    host_presentation: &mut BTreeMap<String, CpuPresentation>,
+) {
+    for host_details in values {
+        match host_presentation.get_mut(&host_details.hostname_port) {
+            Some(row) => {
+                let time_difference = host_details.timestamp.signed_duration_since(row.timestamp).num_milliseconds() as f64 / 1000.0;
+                *row = CpuPresentation {
+                    timestamp: host_details.timestamp,
+                    idle_diff: (host_details.cpu_idle - row.idle_counter)/time_difference,
+                    idle_counter: host_details.cpu_idle,
+                    irq_diff: (host_details.cpu_irq - row.irq_counter)/time_difference,
+                    irq_counter: host_details.cpu_irq,
+                    softirq_diff: (host_details.cpu_softirq - row.softirq_counter)/time_difference,
+                    softirq_counter: host_details.cpu_softirq,
+                    system_diff: (host_details.cpu_system - row.system_counter)/time_difference,
+                    system_counter: host_details.cpu_system,
+                    user_diff: (host_details.cpu_user - row.user_counter)/time_difference,
+                    user_counter: host_details.cpu_user,
+                    iowait_diff: (host_details.cpu_iowait - row.iowait_counter)/time_difference,
+                    iowait_counter: host_details.cpu_iowait,
+                    nice_diff: (host_details.cpu_nice - row.nice_counter)/time_difference,
+                    nice_counter: host_details.cpu_nice,
+                    steal_diff: (host_details.cpu_steal - row.steal_counter)/time_difference,
+                    steal_counter: host_details.cpu_steal,
+                    guest_nice_diff: (host_details.cpu_guest_nice - row.guest_nice_counter)/time_difference,
+                    guest_nice_counter: host_details.cpu_guest_nice,
+                    guest_user_diff: (host_details.cpu_guest_user - row.guest_user_counter)/time_difference,
+                    guest_user_counter: host_details.cpu_guest_user,
+                    schedstat_running_diff: (host_details.schedstat_running - row.schedstat_running_counter)/time_difference,
+                    schedstat_running_counter: host_details.schedstat_running,
+                    schedstat_waiting_diff: (host_details.schedstat_waiting - row.schedstat_waiting_counter)/time_difference,
+                    schedstat_waiting_counter: host_details.schedstat_waiting,
+                    load_1: host_details.load_1,
+                    load_5: host_details.load_5,
+                    load_15: host_details.load_15,
+                    procs_running: host_details.procs_running,
+                    procs_blocked: host_details.procs_blocked,
                 }
-            );
+            },
+            None => {
+                host_presentation.insert( host_details.hostname_port, CpuPresentation {
+                    timestamp: host_details.timestamp,
+                    idle_diff: 0.0,
+                    idle_counter: host_details.cpu_idle,
+                    irq_diff: 0.0,
+                    irq_counter: host_details.cpu_irq,
+                    softirq_diff: 0.0,
+                    softirq_counter: host_details.cpu_softirq,
+                    system_diff: 0.0,
+                    system_counter: host_details.cpu_system,
+                    user_diff: 0.0,
+                    user_counter: host_details.cpu_user,
+                    iowait_diff: 0.0,
+                    iowait_counter: host_details.cpu_iowait,
+                    nice_diff: 0.0,
+                    nice_counter: host_details.cpu_nice,
+                    steal_diff: 0.0,
+                    steal_counter: host_details.cpu_steal,
+                    guest_nice_diff: 0.0,
+                    guest_nice_counter: host_details.cpu_guest_nice,
+                    guest_user_diff: 0.0,
+                    guest_user_counter: host_details.cpu_guest_user,
+                    schedstat_running_diff: 0.0,
+                    schedstat_running_counter: host_details.schedstat_running,
+                    schedstat_waiting_diff: 0.0,
+                    schedstat_waiting_counter: host_details.schedstat_waiting,
+                    load_1: host_details.load_1,
+                    load_5: host_details.load_5,
+                    load_15: host_details.load_15,
+                    procs_running: host_details.procs_running,
+                    procs_blocked: host_details.procs_blocked,
+                });
+            },
         }
     }
 }
