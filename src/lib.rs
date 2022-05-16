@@ -54,6 +54,32 @@ pub struct CpuDetails {
 }
 
 #[derive(Debug)]
+pub struct DiskHost {
+    pub hostname_port: String,
+    pub timestamp: DateTime<Utc>,
+    pub diskdetail: Vec<DiskDetail>,
+}
+
+#[derive(Debug)]
+pub struct DiskDetail {
+    pub disk_name: String,
+    pub reads_completed: f64,
+    pub writes_completed: f64,
+    pub discards_completed: f64,
+    pub reads_merged: f64,
+    pub writes_merged: f64,
+    pub discards_merged: f64,
+    pub reads_bytes: f64,
+    pub writes_bytes: f64,
+    pub discards_sectors: f64,
+    pub reads_time: f64,
+    pub writes_time: f64,
+    pub discards_time: f64,
+    pub total_time: f64,
+    pub queue: f64,
+}
+
+#[derive(Debug)]
 pub struct CpuPresentation {
     pub timestamp: DateTime<Utc>,
     pub idle_diff: f64,
@@ -85,6 +111,39 @@ pub struct CpuPresentation {
     pub load_15: f64,
     pub procs_running: f64,
     pub procs_blocked: f64,
+}
+
+#[derive(Debug)]
+pub struct DiskPresentation {
+    pub timestamp: DateTime<Utc>,
+    pub reads_completed_diff: f64,
+    pub reads_completed_counter: f64,
+    pub writes_completed_diff: f64,
+    pub writes_completed_counter: f64,
+    pub discards_completed_diff: f64,
+    pub discards_completed_counter: f64,
+    pub reads_merged_diff: f64,
+    pub reads_merged_counter: f64,
+    pub writes_merged_diff: f64,
+    pub writes_merged_counter: f64,
+    pub discards_merged_diff: f64,
+    pub discards_merged_counter: f64,
+    pub reads_bytes_diff: f64,
+    pub reads_bytes_counter: f64,
+    pub writes_bytes_diff: f64,
+    pub writes_bytes_counter: f64,
+    pub discards_sectors_diff: f64,
+    pub discards_sectors_counter: f64,
+    pub reads_time_diff: f64,
+    pub reads_time_counter: f64,
+    pub writes_time_diff: f64,
+    pub writes_time_counter: f64,
+    pub discards_time_diff: f64,
+    pub discards_time_counter: f64,
+    pub disk_total_time_diff: f64,
+    pub disk_total_time_counter: f64,
+    pub queue_diff: f64,
+    pub queue_counter: f64,
 }
 
 pub fn read_node_exporter_into_map(
@@ -405,13 +464,13 @@ pub fn add_to_node_exporter_vectors(
 }
 
 pub fn cpu_details(
-    values: HashMap<String, Vec<NodeExporterValues>>
+    values: &HashMap<String, Vec<NodeExporterValues>>
 ) -> Vec<CpuDetails>
 {
     let mut details: Vec<CpuDetails> = Vec::new();
     for (hostname_port, node_exporter_vector) in values {
         details.push( CpuDetails {
-            hostname_port: hostname_port,
+            hostname_port: hostname_port.to_string(),
             timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
             load_1: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_value).nth(0).unwrap(),
             load_5: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load5").map(|x| x.node_exporter_value).nth(0).unwrap(),
@@ -431,6 +490,43 @@ pub fn cpu_details(
             procs_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_running").map(|x| x.node_exporter_value).nth(0).unwrap(),
             procs_blocked: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_blocked").map(|x| x.node_exporter_value).nth(0).unwrap(),
         });
+    }
+    details
+}
+
+pub fn disk_details(
+    values: &HashMap<String, Vec<NodeExporterValues>>
+) -> Vec<DiskHost>
+{
+    let mut details: Vec<DiskHost> = Vec::new();
+    for (hostname_port, node_exporter_vector) in values {
+        let mut diskstats: Vec<DiskDetail> = Vec::new();
+        for row in node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total").filter(|r| ! r.node_exporter_labels.contains("dm-")).map(|x| x.node_exporter_labels.clone()) {
+            diskstats.push( DiskDetail {
+                disk_name: row[1..].to_string(),
+                reads_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                writes_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_writes_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                discards_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discards_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                reads_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                writes_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_writes_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                discards_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discards_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                reads_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_read_bytes_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                writes_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_written_bytes_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                discards_sectors: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discarded_sectors_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                reads_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_read_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                writes_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_write_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                discards_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discard_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                total_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_io_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                queue: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_io_time_weighted_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+            });
+        }
+        details.push(
+            DiskHost {
+                hostname_port: hostname_port.to_string(),
+                timestamp: node_exporter_vector.iter().map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
+                diskdetail: diskstats,
+            }
+        );
     }
     details
 }
@@ -510,6 +606,85 @@ pub fn diff_cpu_details(
                     procs_blocked: host_details.procs_blocked,
                 });
             },
+        }
+    }
+}
+
+pub fn diff_disk_details(
+    values: Vec<DiskHost>,
+    disk_presentation: &mut BTreeMap<String, DiskPresentation>,
+) {
+    for disk_details in values {
+        for disk in disk_details.diskdetail {
+            match disk_presentation.get_mut(format!("{} {}", &disk_details.hostname_port, disk.disk_name).as_str()) {
+               Some(row) => {
+                    let time_difference = disk_details.timestamp.signed_duration_since(row.timestamp).num_milliseconds() as f64 / 1000.0;
+                    *row = DiskPresentation {
+                        timestamp: disk_details.timestamp,
+                        reads_completed_diff: (disk.reads_completed - row.reads_completed_counter)/time_difference,
+                        reads_completed_counter: disk.reads_completed,
+                        writes_completed_diff: (disk.writes_completed - row.writes_completed_counter)/time_difference,
+                        writes_completed_counter: disk.writes_completed,
+                        discards_completed_diff: (disk.discards_completed - row.discards_completed_counter)/time_difference,
+                        discards_completed_counter: disk.discards_completed,
+                        reads_merged_diff: (disk.reads_merged - row.reads_merged_counter)/time_difference,
+                        reads_merged_counter: disk.discards_merged,
+                        writes_merged_diff: (disk.writes_merged - row.writes_merged_counter)/time_difference,
+                        writes_merged_counter: disk.writes_merged,
+                        discards_merged_diff: (disk.discards_merged - row.discards_merged_counter)/time_difference,
+                        discards_merged_counter: disk.discards_merged,
+                        reads_bytes_diff: (disk.reads_bytes - row.reads_bytes_counter)/time_difference,
+                        reads_bytes_counter: disk.reads_bytes,
+                        writes_bytes_diff: (disk.writes_bytes - row.writes_bytes_counter)/time_difference,
+                        writes_bytes_counter: disk.writes_bytes,
+                        discards_sectors_diff: (disk.discards_sectors - row.discards_sectors_counter)/time_difference,
+                        discards_sectors_counter: disk.discards_sectors,
+                        reads_time_diff: (disk.reads_time - row.reads_time_counter)/time_difference,
+                        reads_time_counter: disk.reads_time,
+                        writes_time_diff: (disk.writes_time - row.writes_time_counter)/time_difference,
+                        writes_time_counter: disk.writes_time,
+                        discards_time_diff: (disk.discards_time - row.discards_time_counter)/time_difference,
+                        discards_time_counter: disk.discards_time,
+                        disk_total_time_diff: (disk.total_time - row.disk_total_time_counter)/time_difference,
+                        disk_total_time_counter: disk.total_time,
+                        queue_diff: (disk.queue - row.queue_counter)/time_difference,
+                        queue_counter: disk.queue,
+                    }
+                },
+                None => {
+                    disk_presentation.insert( format!("{} {}", disk_details.hostname_port, disk.disk_name), DiskPresentation {
+                        timestamp: disk_details.timestamp,
+                        reads_completed_diff: 0.0,
+                        reads_completed_counter: disk.reads_completed,
+                        writes_completed_diff: 0.0,
+                        writes_completed_counter: disk.writes_completed,
+                        discards_completed_diff: 0.0,
+                        discards_completed_counter: disk.discards_completed,
+                        reads_merged_diff: 0.0,
+                        reads_merged_counter: disk.discards_merged,
+                        writes_merged_diff: 0.0,
+                        writes_merged_counter: disk.writes_merged,
+                        discards_merged_diff: 0.0,
+                        discards_merged_counter: disk.discards_merged,
+                        reads_bytes_diff: 0.0,
+                        reads_bytes_counter: disk.reads_bytes,
+                        writes_bytes_diff: 0.0,
+                        writes_bytes_counter: disk.writes_bytes,
+                        discards_sectors_diff: 0.0,
+                        discards_sectors_counter: disk.discards_sectors,
+                        reads_time_diff: 0.0,
+                        reads_time_counter: disk.reads_time,
+                        writes_time_diff: 0.0,
+                        writes_time_counter: disk.writes_time,
+                        discards_time_diff: 0.0,
+                        discards_time_counter: disk.discards_time,
+                        disk_total_time_diff: 0.0,
+                        disk_total_time_counter: disk.total_time,
+                        queue_diff: 0.0,
+                        queue_counter: disk.queue,
+                    });
+                },
+            }
         }
     }
 }
