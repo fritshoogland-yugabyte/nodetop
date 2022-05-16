@@ -64,20 +64,23 @@ fn main() {
         );
     };
     if disk {
-        println!("{:30} {:26} | {:26} | {:26} |",
+        println!("{:30} {:26} | {:26} | {:26} | {:8} | {:11}",
                  "",
-                 "read",
-                 "write",
-                 "discard");
+                 "reads per second",
+                 "writes per second",
+                 "discards per second",
+                 "",
+                 "totals per second" ,
+        );
         println!("{:30} {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>8} | {:>5} {:>5}",
                  "hostname",
                  "merge",
                  "io",
-                 "MB",
+                 "mb",
                  "avg",
                  "merge",
                  "io",
-                 "MB",
+                 "mb",
                  "avg",
                  "merge",
                  "io",
