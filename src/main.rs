@@ -7,7 +7,7 @@ use nodetop::{read_node_exporter_into_map, cpu_details, diff_cpu_details, disk_d
 
 const DEFAULT_HOSTNAMES: &str = "192.168.66.80";
 const DEFAULT_PORTS: &str = "9300";
-const INTERVAL: u64 = 5;
+const INTERVAL: &str = "5";
 
 #[derive(Debug, StructOpt)]
 struct Opts {
@@ -23,6 +23,12 @@ struct Opts {
     /// disk statistics
     #[structopt(short, long)]
     disk: bool,
+    /// interval in seconds
+    #[structopt(short, long, default_value = INTERVAL)]
+    interval: u64,
+    /// headers every number of lines
+    #[structopt(short, long, default_value = "60")]
+    lines_for_header: u64,
 }
 
 fn main() {
@@ -33,6 +39,8 @@ fn main() {
     let ports = &ports_string.split(",").collect();
     let cpu = options.cpu as bool;
     let disk = options.disk as bool;
+    let interval = options.interval as u64;
+    let lines_for_header = options.lines_for_header as u64;
 
     if !cpu && !disk {
         Opts::clap().print_help().unwrap();
@@ -40,7 +48,9 @@ fn main() {
     }
     let mut host_presentation: BTreeMap<String, CpuPresentation> = BTreeMap::new();
     let mut disk_presentation: BTreeMap<String, DiskPresentation> = BTreeMap::new();
+    let mut row_counter = 0;
 
+    /*
     if cpu {
         println!("{:30} {:>5} {:>5} | {:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3} | {:3} {:3} | {:>7} {:>7} | {:>6} {:>6} {:>6}",
                  "hostname",
@@ -56,13 +66,14 @@ fn main() {
                  "st%",
                  "gu%",
                  "gn%",
-                 "scd rt",
-                 "scd wt",
-                 "l 1",
-                 "l 5",
-                 "l 15",
+                 "scd_rt",
+                 "scd_wt",
+                 "l_1",
+                 "l_5",
+                 "l_15",
         );
     };
+
     if disk {
         println!("{:30} {:26} | {:26} | {:26} | {:8} | {:11}",
                  "",
@@ -91,8 +102,12 @@ fn main() {
                  "MBPS",
         );
     }
+     */
     //
     loop {
+        if row_counter == 0 && lines_for_header != 0 {
+                print_header(cpu, disk);
+        }
         let start_time = time::Instant::now();
         let values = read_node_exporter_into_map(hosts, ports, 1);
         if cpu {
@@ -160,6 +175,7 @@ fn main() {
                          row.load_5,
                          row.load_15,
                 );
+                row_counter+=1;
             }
         }
         if disk {
@@ -196,10 +212,67 @@ fn main() {
                          (row.reads_completed_diff + row.writes_completed_diff).round(),
                          (row.reads_bytes_diff / (1024 * 1024) as f64 + row.writes_bytes_diff / (1024 * 1024) as f64).round(),
                 );
+                row_counter+=1;
             }
         }
-        if start_time.elapsed() < time::Duration::from_secs(INTERVAL) {
-            thread::sleep(time::Duration::from_secs(INTERVAL) - start_time.elapsed());
+        if row_counter > lines_for_header {
+            row_counter = 0;
+        }
+        if start_time.elapsed() < time::Duration::from_secs(interval) {
+            thread::sleep(time::Duration::from_secs(interval) - start_time.elapsed());
         }
     }
+}
+
+fn print_header(cpu: bool, disk: bool) {
+    if cpu {
+        println!("{:30} {:>5} {:>5} | {:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3} | {:3} {:3} | {:>7} {:>7} | {:>6} {:>6} {:>6}",
+                 "hostname",
+                 "r",
+                 "b",
+                 "id%",
+                 "us%",
+                 "sy%",
+                 "io%",
+                 "ni%",
+                 "ir%",
+                 "si%",
+                 "st%",
+                 "gu%",
+                 "gn%",
+                 "scd_rt",
+                 "scd_wt",
+                 "l_1",
+                 "l_5",
+                 "l_15",
+        );
+    };
+    if disk {
+        println!("{:30} {:26} | {:26} | {:26} | {:8} | {:11}",
+                 "",
+                 "reads per second",
+                 "writes per second",
+                 "discards per second",
+                 "",
+                 "totals per second" ,
+        );
+        println!("{:30} {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>8} | {:>5} {:>5}",
+                 "hostname",
+                 "merge",
+                 "io",
+                 "mb",
+                 "avg",
+                 "merge",
+                 "io",
+                 "mb",
+                 "avg",
+                 "merge",
+                 "io",
+                 "sect",
+                 "avg",
+                 "queue",
+                 "IOPS",
+                 "MBPS",
+        );
+    };
 }
