@@ -52,6 +52,7 @@ pub struct CpuDetails {
     pub procs_running: f64,
     pub procs_blocked: f64,
     pub context_switches: f64,
+    pub interrupts: f64,
 }
 
 #[derive(Debug)]
@@ -114,6 +115,8 @@ pub struct CpuPresentation {
     pub procs_blocked: f64,
     pub context_switches_diff: f64,
     pub context_switches_counter: f64,
+    pub interrupts_diff: f64,
+    pub interrupts_counter: f64,
 }
 
 #[derive(Debug)]
@@ -493,6 +496,7 @@ pub fn cpu_details(
             procs_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_running").map(|x| x.node_exporter_value).nth(0).unwrap(),
             procs_blocked: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_blocked").map(|x| x.node_exporter_value).nth(0).unwrap(),
             context_switches: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_context_switches_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            interrupts: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_intr_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
         });
     }
     details
@@ -576,6 +580,8 @@ pub fn diff_cpu_details(
                     procs_blocked: host_details.procs_blocked,
                     context_switches_diff: (host_details.context_switches - row.context_switches_counter)/time_difference,
                     context_switches_counter: host_details.context_switches,
+                    interrupts_diff: (host_details.interrupts - row.interrupts_counter)/time_difference,
+                    interrupts_counter: host_details.interrupts,
 
                 }
             },
@@ -613,6 +619,8 @@ pub fn diff_cpu_details(
                     procs_blocked: host_details.procs_blocked,
                     context_switches_diff: 0.0,
                     context_switches_counter: host_details.context_switches,
+                    interrupts_diff: 0.0,
+                    interrupts_counter: host_details.interrupts,
                 });
             },
         }
