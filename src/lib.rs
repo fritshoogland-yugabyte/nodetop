@@ -51,6 +51,7 @@ pub struct CpuDetails {
     pub schedstat_waiting: f64,
     pub procs_running: f64,
     pub procs_blocked: f64,
+    pub context_switches: f64,
 }
 
 #[derive(Debug)]
@@ -111,6 +112,8 @@ pub struct CpuPresentation {
     pub load_15: f64,
     pub procs_running: f64,
     pub procs_blocked: f64,
+    pub context_switches_diff: f64,
+    pub context_switches_counter: f64,
 }
 
 #[derive(Debug)]
@@ -489,6 +492,7 @@ pub fn cpu_details(
             schedstat_waiting: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_waiting_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
             procs_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_running").map(|x| x.node_exporter_value).nth(0).unwrap(),
             procs_blocked: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_blocked").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            context_switches: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_context_switches_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
         });
     }
     details
@@ -570,6 +574,9 @@ pub fn diff_cpu_details(
                     load_15: host_details.load_15,
                     procs_running: host_details.procs_running,
                     procs_blocked: host_details.procs_blocked,
+                    context_switches_diff: (host_details.context_switches - row.context_switches_counter)/time_difference,
+                    context_switches_counter: host_details.context_switches,
+
                 }
             },
             None => {
@@ -604,6 +611,8 @@ pub fn diff_cpu_details(
                     load_15: host_details.load_15,
                     procs_running: host_details.procs_running,
                     procs_blocked: host_details.procs_blocked,
+                    context_switches_diff: 0.0,
+                    context_switches_counter: host_details.context_switches,
                 });
             },
         }

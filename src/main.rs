@@ -50,60 +50,6 @@ fn main() {
     let mut disk_presentation: BTreeMap<String, DiskPresentation> = BTreeMap::new();
     let mut row_counter = 0;
 
-    /*
-    if cpu {
-        println!("{:30} {:>5} {:>5} | {:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3} | {:3} {:3} | {:>7} {:>7} | {:>6} {:>6} {:>6}",
-                 "hostname",
-                 "r",
-                 "b",
-                 "id%",
-                 "us%",
-                 "sy%",
-                 "io%",
-                 "ni%",
-                 "ir%",
-                 "si%",
-                 "st%",
-                 "gu%",
-                 "gn%",
-                 "scd_rt",
-                 "scd_wt",
-                 "l_1",
-                 "l_5",
-                 "l_15",
-        );
-    };
-
-    if disk {
-        println!("{:30} {:26} | {:26} | {:26} | {:8} | {:11}",
-                 "",
-                 "reads per second",
-                 "writes per second",
-                 "discards per second",
-                 "",
-                 "totals per second" ,
-        );
-        println!("{:30} {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>8} | {:>5} {:>5}",
-                 "hostname",
-                 "merge",
-                 "io",
-                 "mb",
-                 "avg",
-                 "merge",
-                 "io",
-                 "mb",
-                 "avg",
-                 "merge",
-                 "io",
-                 "sect",
-                 "avg",
-                 "queue",
-                 "IOPS",
-                 "MBPS",
-        );
-    }
-     */
-    //
     loop {
         if row_counter == 0 && lines_for_header != 0 {
                 print_header(cpu, disk);
@@ -115,7 +61,7 @@ fn main() {
             diff_cpu_details(cpu_details, &mut host_presentation);
             for (hostname_port, row) in &host_presentation {
                 let total_time = row.idle_diff + row.user_diff + row.system_diff + row.irq_diff + row.softirq_diff + row.iowait_diff + row.nice_diff + row.steal_diff + row.guest_user_diff + row.guest_nice_diff;
-                println!("{:30} {:5.0} {:5.0} | {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} | {:3.0} {:3.0} | {:7.3} {:7.3} | {:6.3} {:6.3} {:6.3}",
+                println!("{:30} {:5.0} {:5.0} | {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} {:3.0} | {:3.0} {:3.0} | {:7.3} {:7.3} | {:7.0} | {:6.3} {:6.3} {:6.3}",
                          hostname_port,
                          row.procs_running,
                          row.procs_blocked,
@@ -171,6 +117,7 @@ fn main() {
                          },
                          row.schedstat_running_diff,
                          row.schedstat_waiting_diff,
+                         row.context_switches_diff,
                          row.load_1,
                          row.load_5,
                          row.load_15,
@@ -226,7 +173,7 @@ fn main() {
 
 fn print_header(cpu: bool, disk: bool) {
     if cpu {
-        println!("{:30} {:>5} {:>5} | {:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3} | {:3} {:3} | {:>7} {:>7} | {:>6} {:>6} {:>6}",
+        println!("{:30} {:>5} {:>5} | {:3} {:3} {:3} {:3} {:3} {:3} {:3} {:3} | {:3} {:3} | {:>7} {:>7} | {:>7} | {:>6} {:>6} {:>6}",
                  "hostname",
                  "r",
                  "b",
@@ -242,6 +189,7 @@ fn print_header(cpu: bool, disk: bool) {
                  "gn%",
                  "scd_rt",
                  "scd_wt",
+                 "cs",
                  "l_1",
                  "l_5",
                  "l_15",
