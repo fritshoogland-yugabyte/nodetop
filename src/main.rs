@@ -361,7 +361,7 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
         let mut context = ChartBuilder::on(&multiroot[multiroot_nr])
             .set_label_area_size(LabelAreaPosition::Left, 60)
             .set_label_area_size(LabelAreaPosition::Bottom, 50)
-            .caption(server, ("sans-serif", 20))
+            .caption(&server, ("sans-serif", 20))
             .build_cartesian_2d(start_time..end_time, low_value..high_value)
             .unwrap();
         context.configure_mesh()
@@ -371,16 +371,16 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
             .y_desc("Seconds per second")
             .draw()
             .unwrap();
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.scheduler_wait)), 0.0, Palette99::pick(1))).unwrap().label("scheduler wait").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(1)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.scheduler_runtime)), 0.0, Palette99::pick(2))).unwrap().label("scheduler run").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(2)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.idle)), 0.0, TRANSPARENT).border_style(RED)).unwrap().label("Total CPU").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.steal)), 0.0, Palette99::pick(3))).unwrap().label("steal").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(3)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.softirq)), 0.0, Palette99::pick(4))).unwrap().label("soft irq").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(4)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.irq)), 0.0, Palette99::pick(5))).unwrap().label("irq").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(5)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.nice)), 0.0, Palette99::pick(6))).unwrap().label("nice").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(6)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.iowait)), 0.0, Palette99::pick(7))).unwrap().label("iowait").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(7)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.system)), 0.0, Palette99::pick(8))).unwrap().label("system").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(8)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().map(|x| (x.timestamp, x.user)), 0.0, GREEN)).unwrap().label("user").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.scheduler_wait)), 0.0, Palette99::pick(1))).unwrap().label("scheduler wait").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(1)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.scheduler_runtime)), 0.0, Palette99::pick(2))).unwrap().label("scheduler run").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(2)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.idle)), 0.0, TRANSPARENT).border_style(RED)).unwrap().label("Total CPU").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.steal)), 0.0, Palette99::pick(3))).unwrap().label("steal").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(3)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.softirq)), 0.0, Palette99::pick(4))).unwrap().label("soft irq").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(4)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.irq)), 0.0, Palette99::pick(5))).unwrap().label("irq").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(5)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.nice)), 0.0, Palette99::pick(6))).unwrap().label("nice").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(6)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.iowait)), 0.0, Palette99::pick(7))).unwrap().label("iowait").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(7)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.system)), 0.0, Palette99::pick(8))).unwrap().label("system").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(8)));
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.user)), 0.0, GREEN)).unwrap().label("user").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
         context.configure_series_labels().border_style(BLACK).background_style(WHITE).draw().unwrap();
     }
 }
