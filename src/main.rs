@@ -75,6 +75,7 @@ fn main() {
     let cpu_history_ctrlc_clone = cpu_history_ref.clone();
     ctrlc::set_handler(move || {
 
+        /*
         let cpu_history = cpu_history_ctrlc_clone.lock().unwrap();
         //println!("{:?}", cpu_history);
 
@@ -88,7 +89,8 @@ fn main() {
         } else {
             high_value_scheduler
         };
-        let root = BitMapBackend::new("/home/fritshoogland/plot.png", (600,400))
+        println!("{}, {}, {}. {}", start_time, end_time, low_value, high_value);
+        let root = BitMapBackend::new("xplot.png", (600,400))
             .into_drawing_area();
         root.fill(&WHITE).unwrap();
         let mut context = ChartBuilder::on(&root)
@@ -101,15 +103,23 @@ fn main() {
             .x_labels(4)
             .x_label_formatter(&|x| x.naive_local().to_string())
             .x_desc("Time")
-            .y_desc("Time taken seconds")
+            .y_desc("Seconds per second")
             .draw()
             .unwrap();
-        context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.idle)), 0.0, &GREEN ) ).unwrap();
-        context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.steal)), 0.0, &BLACK ) ).unwrap();
-        context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.softirq)), 0.0, &YELLOW ) ).unwrap();
-        context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.irq)), 0.0, &WHITE ) ).unwrap();
+        //context.draw_series( cpu_history.iter().map(|x| Circle::new((x.timestamp, x.user), 5, &GREEN ) ) ).unwrap();
+        //context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| (x.timestamp, x.user)), 0.0, GREEN ) ).unwrap();
+        context.draw_series( cpu_history.iter().map(|x| Circle::new((x.timestamp, x.idle), 6, GREEN ) ) ).unwrap();
+        //context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.steal)), 0.0, &BLACK ) ).unwrap();
+        //context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.softirq)), 0.0, &YELLOW ) ).unwrap();
+        //context.draw_series( AreaSeries::new( cpu_history.iter().map(|x| x.timestamp).zip(cpu_history.iter().map(|x| x.irq)), 0.0, &WHITE ) ).unwrap();
 
-        println!("done");
+
+         */
+        draw_cpu(&cpu_history_ctrlc_clone);
+
+        //println!("{:#?}", cpu_history);
+
+
         process::exit(0);
     }).unwrap();
 
@@ -125,21 +135,23 @@ fn main() {
             diff_cpu_details(cpu_details, &mut host_presentation);
             for (hostname_port, row) in &host_presentation {
 
-                let mut cpu_history = cpu_history_loop_clone.lock().unwrap();
-                cpu_history.push(CpuGraph {
-                    hostname: hostname_port.to_string(),
-                    timestamp: row.timestamp,
-                    user: row.user_diff,
-                    system: row.user_diff+row.system_diff,
-                    iowait: row.user_diff+row.system_diff+row.iowait_diff,
-                    nice: row.user_diff+row.system_diff+row.iowait_diff+row.nice_diff,
-                    irq: row.user_diff+row.system_diff+row.iowait_diff+row.nice_diff+row.irq_diff,
-                    softirq: row.user_diff+row.system_diff+row.iowait_diff+row.nice_diff+row.irq_diff+row.softirq_diff,
-                    steal: row.user_diff+row.system_diff+row.iowait_diff+row.nice_diff+row.irq_diff+row.softirq_diff+row.steal_diff,
-                    idle: row.user_diff+row.system_diff+row.iowait_diff+row.nice_diff+row.irq_diff+row.softirq_diff+row.steal_diff+row.idle_diff,
-                    scheduler_runtime: row.schedstat_running_diff,
-                    scheduler_wait: row.schedstat_running_diff+row.schedstat_waiting_diff,
-                });
+                if ! ( row.user_diff == 0. && row.system_diff == 0. && row.iowait_diff == 0. && row.nice_diff == 0. && row.irq_diff == 0. && row.softirq_diff == 0. && row.steal_diff == 0. ) {
+                    let mut cpu_history = cpu_history_loop_clone.lock().unwrap();
+                    cpu_history.push(CpuGraph {
+                        hostname: hostname_port.to_string(),
+                        timestamp: row.timestamp,
+                        user: row.user_diff,
+                        system: row.user_diff + row.system_diff,
+                        iowait: row.user_diff + row.system_diff + row.iowait_diff,
+                        nice: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff,
+                        irq: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff,
+                        softirq: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff,
+                        steal: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff + row.steal_diff,
+                        idle: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff + row.steal_diff + row.idle_diff,
+                        scheduler_runtime: row.schedstat_running_diff,
+                        scheduler_wait: row.schedstat_running_diff + row.schedstat_waiting_diff,
+                    });
+                };
                 //let cpu_details = CpuGraph { timestamp: row.timestamp, user: row.user_diff, system: row.system_diff, iowait: row.iowait_diff, nice: row.nice_diff, irq: row.irq_diff, softirq: row.softirq_diff, steal: row.steal_diff, idle: row.idle_diff, scheduler_runtime: row.schedstat_running_diff, scheduler_wait: row.schedstat_waiting_diff };
                 //cpu_history.push(HostnameCpu{ hostname: hostname_port.to_string(), cpugraph: Vec { buf: (), cpu_details, len: 0 } });
                 //cpu_history.push( row.timestamp, hostname_cpu);
@@ -322,4 +334,48 @@ fn print_header(cpu: bool, disk: bool) {
                  "MBPS",
         );
     };
+}
+
+fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
+
+    let cpu_data = data.lock().unwrap();
+
+    let start_time = cpu_data.iter().map(|x| x.timestamp).min().unwrap();
+    let end_time = cpu_data.iter().map(|x| x.timestamp).max().unwrap();
+    let low_value: f64 = 0.0;
+    let high_value_cpu = cpu_data.iter().map(|x| x.idle).fold(0./0., f64::max);
+    let high_value_scheduler = cpu_data.iter().map(|x| x.scheduler_wait).fold(0./0., f64::max);
+    let high_value = if high_value_cpu > high_value_scheduler {
+        high_value_cpu
+    } else {
+        high_value_scheduler
+    };
+    println!("{}, {}, {}. {}", start_time, end_time, low_value, high_value);
+    let root = BitMapBackend::new("xplot.png", (1200,800))
+        .into_drawing_area();
+    root.fill(&WHITE).unwrap();
+    let mut context = ChartBuilder::on(&root)
+        .set_label_area_size(LabelAreaPosition::Left, 60)
+        .set_label_area_size(LabelAreaPosition::Bottom, 50)
+        .caption("heading", ("sans-serif", 20))
+        .build_cartesian_2d(start_time..end_time, low_value..high_value)
+        .unwrap();
+    context.configure_mesh()
+        .x_labels(4)
+        .x_label_formatter(&|x| x.naive_local().to_string())
+        .x_desc("Time")
+        .y_desc("Seconds per second")
+        .draw()
+        .unwrap();
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.scheduler_wait)), 0.0, Palette99::pick(1) ) ).unwrap().label("scheduler wait").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(1)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.scheduler_runtime)), 0.0, Palette99::pick(2) ) ).unwrap().label("scheduler run").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(2)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.idle)), 0.0, TRANSPARENT ).border_style(RED) ).unwrap().label("Total CPU").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], RED));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.steal)), 0.0, Palette99::pick(3) ) ).unwrap().label("steal").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(3)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.softirq)), 0.0, Palette99::pick(4) ) ).unwrap().label("soft irq").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(4)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.irq)), 0.0, Palette99::pick(5) ) ).unwrap().label("irq").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(5)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.nice)), 0.0, Palette99::pick(6) ) ).unwrap().label("nice").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(6)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.iowait)), 0.0, Palette99::pick(7) ) ).unwrap().label("iowait").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(7)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.system)), 0.0, Palette99::pick(8) ) ).unwrap().label("system").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], Palette99::pick(8)));
+    context.draw_series( AreaSeries::new( cpu_data.iter().map(|x| (x.timestamp, x.user)), 0.0, GREEN ) ).unwrap().label("user").legend(|(x,y)| PathElement::new(vec![(x,y), (x + 20, y)], GREEN));
+    context.configure_series_labels().border_style(BLACK).background_style(WHITE).draw().unwrap();
 }
