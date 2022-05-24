@@ -7,6 +7,7 @@ use ctrlc;
 use std::sync::{Arc, Mutex};
 use plotters::prelude::*;
 use itertools::Itertools;
+use plotters::chart::SeriesLabelPosition::UpperLeft;
 
 use nodetop::{read_node_exporter_into_map, cpu_details, diff_cpu_details, disk_details, CpuPresentation, DiskPresentation, diff_disk_details};
 
@@ -351,7 +352,7 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
     } else {
         high_value_scheduler
     };
-    let root = BitMapBackend::new("xplot.png", (1200,800))
+    let root = BitMapBackend::new("xplot.png", (1200,1000))
         .into_drawing_area();
     let nr_servers = cpu_data.iter().map(|x| x.hostname.clone()).unique().count();
     let multiroot = root.split_evenly((nr_servers,1));
@@ -373,7 +374,6 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
             .unwrap();
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.scheduler_wait)), 0.0, Palette99::pick(1))).unwrap().label("scheduler wait").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(1)));
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.scheduler_runtime)), 0.0, Palette99::pick(2))).unwrap().label("scheduler run").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(2)));
-        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.idle)), 0.0, TRANSPARENT).border_style(RED)).unwrap().label("Total CPU").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.steal)), 0.0, Palette99::pick(3))).unwrap().label("steal").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(3)));
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.softirq)), 0.0, Palette99::pick(4))).unwrap().label("soft irq").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(4)));
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.irq)), 0.0, Palette99::pick(5))).unwrap().label("irq").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(5)));
@@ -381,6 +381,7 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.iowait)), 0.0, Palette99::pick(7))).unwrap().label("iowait").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(7)));
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.system)), 0.0, Palette99::pick(8))).unwrap().label("system").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], Palette99::pick(8)));
         context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.user)), 0.0, GREEN)).unwrap().label("user").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
-        context.configure_series_labels().border_style(BLACK).background_style(WHITE).draw().unwrap();
+        context.draw_series(AreaSeries::new(cpu_data.iter().filter(|x| x.hostname == server).map(|x| (x.timestamp, x.idle)), 0.0, TRANSPARENT).border_style(RED)).unwrap().label("Total CPU").legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
+        context.configure_series_labels().border_style(BLACK).background_style(WHITE).position(UpperLeft).draw().unwrap();
     }
 }
