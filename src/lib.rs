@@ -156,7 +156,6 @@ pub fn read_node_exporter_into_map(
     hosts: &Vec<&str>,
     ports: &Vec<&str>,
     parallel: usize,
-//) -> Vec<StoredNodeExporterValues> {
 ) -> HashMap<String, Vec<NodeExporterValues>> {
     let pool = rayon::ThreadPoolBuilder::new().num_threads(parallel).build().unwrap();
     let (tx, rx) = channel();
@@ -172,10 +171,8 @@ pub fn read_node_exporter_into_map(
             }
         }
     });
-    //let mut stored_node_exporter_values: Vec<StoredNodeExporterValues> = Vec::new();
     let mut map_exporter_values: HashMap<String, Vec<NodeExporterValues>> = HashMap::new();
     for (hostname_port, _detail_snapshot_time, node_exporter_values) in rx {
-        //add_to_node_exporter_vectors(node_exporter_values, &hostname_port, &mut stored_node_exporter_values);
         map_exporter_values.insert( hostname_port, node_exporter_values);
     }
     map_exporter_values
