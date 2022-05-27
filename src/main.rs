@@ -31,11 +31,11 @@ struct DiskGraph {
     hostname: String,
     timestamp: DateTime<Utc>,
     disk: String,
-    reads_merged: f64,
+    //reads_merged: f64,
     reads_completed: f64,
     reads_bytes: f64,
     reads_time: f64,
-    writes_merged: f64,
+    //writes_merged: f64,
     writes_completed: f64,
     writes_bytes: f64,
     writes_time: f64,
@@ -100,12 +100,8 @@ fn main() {
     ctrlc::set_handler(move || {
 
         if graph {
-            if cpu {
                 draw_cpu(&cpu_history_ctrlc_clone);
-            }
-            if disk {
                 draw_disk( &disk_history_ctrlc_clone);
-            }
         }
         process::exit(0);
 
@@ -120,28 +116,28 @@ fn main() {
         }
         let start_time = time::Instant::now();
         let values = read_node_exporter_into_map(hosts, ports, 1);
-        if cpu {
-            let cpu_details = cpu_details(&values);
-            diff_cpu_details(cpu_details, &mut host_presentation);
-            for (hostname_port, row) in &host_presentation {
 
-                if ! ( row.user_diff == 0. && row.system_diff == 0. && row.iowait_diff == 0. && row.nice_diff == 0. && row.irq_diff == 0. && row.softirq_diff == 0. && row.steal_diff == 0. ) && graph {
-                    let mut cpu_history = cpu_history_loop_clone.lock().unwrap();
-                    cpu_history.push(CpuGraph {
-                        hostname: hostname_port.to_string(),
-                        timestamp: row.timestamp,
-                        user: row.user_diff,
-                        system: row.user_diff + row.system_diff,
-                        iowait: row.user_diff + row.system_diff + row.iowait_diff,
-                        nice: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff,
-                        irq: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff,
-                        softirq: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff,
-                        steal: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff + row.steal_diff,
-                        idle: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff + row.steal_diff + row.idle_diff,
-                        scheduler_runtime: row.schedstat_running_diff,
-                        scheduler_wait: row.schedstat_running_diff + row.schedstat_waiting_diff,
-                    });
-                };
+        let cpu_details = cpu_details(&values);
+        diff_cpu_details(cpu_details, &mut host_presentation);
+        for (hostname_port, row) in &host_presentation {
+            if ! ( row.user_diff == 0. && row.system_diff == 0. && row.iowait_diff == 0. && row.nice_diff == 0. && row.irq_diff == 0. && row.softirq_diff == 0. && row.steal_diff == 0. ) && graph {
+                let mut cpu_history = cpu_history_loop_clone.lock().unwrap();
+                cpu_history.push(CpuGraph {
+                    hostname: hostname_port.to_string(),
+                    timestamp: row.timestamp,
+                    user: row.user_diff,
+                    system: row.user_diff + row.system_diff,
+                    iowait: row.user_diff + row.system_diff + row.iowait_diff,
+                    nice: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff,
+                    irq: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff,
+                    softirq: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff,
+                    steal: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff + row.steal_diff,
+                    idle: row.user_diff + row.system_diff + row.iowait_diff + row.nice_diff + row.irq_diff + row.softirq_diff + row.steal_diff + row.idle_diff,
+                    scheduler_runtime: row.schedstat_running_diff,
+                    scheduler_wait: row.schedstat_running_diff + row.schedstat_waiting_diff,
+                });
+            };
+            if cpu {
                 println!("{:30} {:5.0} {:5.0} | {:7.3} {:7.3} {:7.3} {:7.3} {:7.3} {:7.3} {:7.3} {:7.3} | {:7.3} {:7.3} | {:7.3} {:7.3} | {:7.0} {:7.0} | {:6.3} {:6.3} {:6.3}",
                          hostname_port,
                          row.procs_running,
@@ -156,58 +152,6 @@ fn main() {
                          row.steal_diff,
                          row.guest_user_diff,
                          row.guest_nice_diff,
-                    /*
-                         if (row.idle_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.idle_diff / total_time * 100.0
-                         },
-                         if (row.user_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.user_diff / total_time * 100.0
-                         },
-                         if (row.system_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.system_diff / total_time * 100.0
-                         },
-                         if (row.iowait_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.iowait_diff / total_time * 100.0
-                         },
-                         if (row.nice_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.nice_diff / total_time * 100.0
-                         },
-                         if (row.irq_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.irq_diff / total_time * 100.0
-                         },
-                         if (row.softirq_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.softirq_diff / total_time * 100.0
-                         },
-                         if (row.steal_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.steal_diff / total_time * 100.0
-                         },
-                         if (row.guest_user_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.guest_user_diff / total_time * 100.0
-                         },
-                         if (row.guest_nice_diff / total_time * 100.0).is_nan() {
-                             0.0
-                         } else {
-                             row.guest_nice_diff / total_time * 100.0
-                         },
-                     */
                          row.schedstat_running_diff,
                          row.schedstat_waiting_diff,
                          row.interrupts_diff,
@@ -219,30 +163,29 @@ fn main() {
                 row_counter+=1;
             }
         }
-        if disk {
-            let disk_details = disk_details(&values);
-            diff_disk_details(disk_details, &mut disk_presentation);
-            for (host_disk, row) in &disk_presentation {
-
-                if disk_first_capture && graph {
-                    disk_first_capture = false;
-                } else {
-                    let mut disk_history = disk_history_loop_clone.lock().unwrap();
-                    disk_history.push( DiskGraph {
-                        hostname: host_disk.split_whitespace().nth(0).unwrap().to_string(),
-                        timestamp: row.timestamp,
-                        disk: host_disk.split_whitespace().nth(1).unwrap().to_string(),
-                        reads_merged: row.reads_merged_diff,
-                        reads_completed: row.reads_completed_diff,
-                        reads_bytes: row.reads_bytes_diff,
-                        reads_time: row.reads_time_diff,
-                        writes_merged: row.writes_merged_diff,
-                        writes_completed: row.writes_completed_diff,
-                        writes_bytes: row.writes_bytes_diff,
-                        writes_time: row.writes_time_diff,
-                        queue: row.queue_diff,
-                    });
-                }
+        let disk_details = disk_details(&values);
+        diff_disk_details(disk_details, &mut disk_presentation);
+        for (host_disk, row) in &disk_presentation {
+            if disk_first_capture && graph {
+                disk_first_capture = false;
+            } else {
+                let mut disk_history = disk_history_loop_clone.lock().unwrap();
+                disk_history.push( DiskGraph {
+                    hostname: host_disk.split_whitespace().nth(0).unwrap().to_string(),
+                    timestamp: row.timestamp,
+                    disk: host_disk.split_whitespace().nth(1).unwrap().to_string(),
+                    //reads_merged: row.reads_merged_diff,
+                    reads_completed: row.reads_completed_diff,
+                    reads_bytes: row.reads_bytes_diff,
+                    reads_time: row.reads_time_diff,
+                    //writes_merged: row.writes_merged_diff,
+                    writes_completed: row.writes_completed_diff,
+                    writes_bytes: row.writes_bytes_diff,
+                    writes_time: row.writes_time_diff,
+                    queue: row.queue_diff,
+                });
+            }
+            if disk {
                 println!("{:30} {:5.0} {:5.0} {:5.0} {:8.6} | {:5.0} {:5.0} {:5.0} {:8.6} | {:5.0} {:5.0} {:5.0} {:8.6} | {:8.3} | {:5.0} {:5.0}",
                          host_disk,
                          row.reads_merged_diff.round(),
@@ -354,7 +297,7 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
     } else {
         high_value_scheduler
     };
-    let root = BitMapBackend::new("xplot.png", (1200,1000))
+    let root = BitMapBackend::new("cpu.png", (1200,1000))
         .into_drawing_area();
     let nr_servers = cpu_data.iter().map(|x| x.hostname.clone()).unique().count();
     let multiroot = root.split_evenly((nr_servers,1));
@@ -420,15 +363,15 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
         disk_data.iter().map(|x| x.queue).fold(0./0., f64::max)
     };
     let low_value_latency = 0.;
-    let high_value_latency_read = if disk_data.iter().map(|x| (x.reads_time / x.reads_completed)).fold(0./0., f64::max) == 0. {
+    let high_value_latency_read = if disk_data.iter().map(|x| (x.reads_time / x.reads_completed)*1000.).fold(0./0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| (x.reads_time / x.reads_completed)).fold(0./0., f64::max)
+        disk_data.iter().map(|x| (x.reads_time / x.reads_completed)*1000.).fold(0./0., f64::max)
     };
-    let high_value_latency_write = if disk_data.iter().map(|x| (x.writes_time / x.writes_completed)).fold(0./0., f64::max) == 0. {
+    let high_value_latency_write = if disk_data.iter().map(|x| (x.writes_time / x.writes_completed)*1000.).fold(0./0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| (x.writes_time / x.writes_completed)).fold(0./0., f64::max)
+        disk_data.iter().map(|x| (x.writes_time / x.writes_completed)*1000.).fold(0./0., f64::max)
     };
     let high_value_latency = if high_value_latency_read > high_value_latency_write {
         high_value_latency_read
@@ -442,7 +385,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
     // nr_servers * nr_disks to give each disk a graph root.
     // nr_disks * 2 to give IOPS and MBPS their graph root.
 
-    let root = BitMapBackend::new("xplot.png", (1200,((nr_servers * (nr_disks *3 ))*200).try_into().unwrap()))
+    let root = BitMapBackend::new("disk.png", (1200,((nr_servers * (nr_disks *3 ))*200).try_into().unwrap()))
         .into_drawing_area();
 
     let multiroot = root.split_evenly(((nr_servers * (nr_disks*3)),1));
@@ -544,7 +487,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
             context.configure_mesh()
                 .x_labels(4)
                 .x_label_formatter(&|x| x.to_rfc3339().to_string())
-                .y_desc("latency")
+                .y_desc("latency milliseconds")
                 .draw()
                 .unwrap();
             context.configure_secondary_axes()
@@ -554,18 +497,18 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
             context.draw_series(LineSeries::new(disk_data
                                                     .iter()
                                                     .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, (x.reads_time / x.reads_completed))), GREEN)
+                                                    .map(|x| (x.timestamp, (x.reads_time / x.reads_completed)*1000.)), GREEN)
             )
                 .unwrap()
-                .label("read latency")
+                .label("avg read latency")
                 .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
             context.draw_series(LineSeries::new(disk_data
                                                     .iter()
                                                     .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, (x.writes_time / x.writes_completed))), RED)
+                                                    .map(|x| (x.timestamp, (x.writes_time / x.writes_completed)*1000.)), RED)
             )
                 .unwrap()
-                .label("write latency")
+                .label("avg write latency")
                 .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
             context.draw_secondary_series(LineSeries::new(disk_data
                                                     .iter()
@@ -652,4 +595,56 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
                 .position(UpperLeft)
                 .draw()
                 .unwrap();
+ */
+/*
+     if (row.idle_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.idle_diff / total_time * 100.0
+     },
+     if (row.user_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.user_diff / total_time * 100.0
+     },
+     if (row.system_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.system_diff / total_time * 100.0
+     },
+     if (row.iowait_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.iowait_diff / total_time * 100.0
+     },
+     if (row.nice_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.nice_diff / total_time * 100.0
+     },
+     if (row.irq_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.irq_diff / total_time * 100.0
+     },
+     if (row.softirq_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.softirq_diff / total_time * 100.0
+     },
+     if (row.steal_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.steal_diff / total_time * 100.0
+     },
+     if (row.guest_user_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.guest_user_diff / total_time * 100.0
+     },
+     if (row.guest_nice_diff / total_time * 100.0).is_nan() {
+         0.0
+     } else {
+         row.guest_nice_diff / total_time * 100.0
+     },
  */
