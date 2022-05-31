@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use structopt::StructOpt;
 use std::{thread, time};
+//use std::intrinsics::offset;
 use std::process;
 use chrono::{DateTime, Utc};
 use ctrlc;
@@ -9,7 +10,7 @@ use plotters::prelude::*;
 use itertools::Itertools;
 use plotters::chart::SeriesLabelPosition::UpperLeft;
 
-use nodetop::{read_node_exporter_into_map, cpu_details, diff_cpu_details, disk_details, CpuPresentation, DiskPresentation, diff_disk_details};
+use nodetop::{read_node_exporter_into_map, cpu_details, diff_cpu_details, disk_details, CpuPresentation, DiskPresentation, diff_disk_details, YBIOPresentation, yugabyte_details, diff_yugabyte_details};
 
 #[derive(Debug)]
 struct CpuGraph {
@@ -26,6 +27,7 @@ struct CpuGraph {
     scheduler_runtime: f64,
     scheduler_wait: f64,
 }
+
 #[derive(Debug)]
 struct DiskGraph {
     hostname: String,
@@ -40,6 +42,25 @@ struct DiskGraph {
     writes_bytes: f64,
     writes_time: f64,
     queue: f64,
+}
+
+#[derive(Debug)]
+struct YBIOGraph {
+    hostname: String,
+    timestamp: DateTime<Utc>,
+    glog_messages_total: f64,
+    log_bytes_logged: f64,
+    log_reader_bytes_read: f64,
+    log_append_latency_count: f64,
+    log_append_latency_sum: f64,
+    log_cache_disk_reads: f64,
+    rocksdb_flush_write_bytes: f64,
+    rocksdb_compact_read_bytes: f64,
+    rocksdb_compact_write_bytes: f64,
+    rocksdb_write_raw_block_micros_count: f64,
+    rocksdb_write_raw_block_micros_sum: f64,
+    rocksdb_sst_read_micros_count: f64,
+    rocksdb_sst_read_micros_sum: f64,
 }
 
 const DEFAULT_HOSTNAMES: &str = "192.168.66.80";
@@ -60,6 +81,9 @@ struct Opts {
     /// disk statistics
     #[structopt(short, long)]
     disk: bool,
+    /// yugabyte statistics
+    #[structopt(short, long)]
+    yb: bool,
     /// interval in seconds
     #[structopt(short, long, default_value = INTERVAL)]
     interval: u64,
@@ -79,48 +103,56 @@ fn main() {
     let ports = &ports_string.split(",").collect();
     let cpu = options.cpu as bool;
     let disk = options.disk as bool;
+    let yb = options.yb as bool;
     let interval = options.interval as u64;
     let lines_for_header = options.lines_for_header as u64;
     let graph = options.graph as bool;
 
-    if !cpu && !disk {
+    if !cpu && !disk && !yb {
         Opts::clap().print_help().unwrap();
         process::exit(0);
     }
     let mut host_presentation: BTreeMap<String, CpuPresentation> = BTreeMap::new();
     let mut disk_presentation: BTreeMap<String, DiskPresentation> = BTreeMap::new();
+    let mut yugabyte_presentation: BTreeMap<String, YBIOPresentation> = BTreeMap::new();
     let mut row_counter = 0;
     let cpu_history: Vec<CpuGraph> = Vec::new();
     let cpu_history_ref: Arc<Mutex<Vec<CpuGraph>>> = Arc::new(Mutex::new(cpu_history));
     let disk_history: Vec<DiskGraph> = Vec::new();
     let disk_history_ref: Arc<Mutex<Vec<DiskGraph>>> = Arc::new(Mutex::new(disk_history));
+    let yugabyte_history: Vec<YBIOGraph> = Vec::new();
+    let yugabyte_history_ref: Arc<Mutex<Vec<YBIOGraph>>> = Arc::new(Mutex::new(yugabyte_history));
 
     let cpu_history_ctrlc_clone = cpu_history_ref.clone();
     let disk_history_ctrlc_clone = disk_history_ref.clone();
-    ctrlc::set_handler(move || {
+    let yugabyte_history_ctrlc_clone = yugabyte_history_ref.clone();
 
+    ctrlc::set_handler(move || {
         if graph {
-                draw_cpu(&cpu_history_ctrlc_clone);
-                draw_disk( &disk_history_ctrlc_clone);
+            draw_cpu(&cpu_history_ctrlc_clone);
+            draw_disk(&disk_history_ctrlc_clone);
+            draw_yugabyte(&yugabyte_history_ctrlc_clone);
         }
         process::exit(0);
-
     }).unwrap();
 
     let cpu_history_loop_clone = cpu_history_ref.clone();
     let disk_history_loop_clone = disk_history_ref.clone();
+    let yugabyte_history_loop_clone = yugabyte_history_ref.clone();
+
     let mut disk_first_capture = true;
+    let mut ybio_first_capture = true;
     loop {
         if row_counter == 0 && lines_for_header != 0 {
-                print_header(cpu, disk);
+            print_header(cpu, disk, yb);
         }
         let start_time = time::Instant::now();
-        let values = read_node_exporter_into_map(hosts, ports, 1);
+        let node_values = read_node_exporter_into_map(hosts, ports, 1);
 
-        let cpu_details = cpu_details(&values);
+        let cpu_details = cpu_details(&node_values);
         diff_cpu_details(cpu_details, &mut host_presentation);
         for (hostname_port, row) in &host_presentation {
-            if ! ( row.user_diff == 0. && row.system_diff == 0. && row.iowait_diff == 0. && row.nice_diff == 0. && row.irq_diff == 0. && row.softirq_diff == 0. && row.steal_diff == 0. ) && graph {
+            if !(row.user_diff == 0. && row.system_diff == 0. && row.iowait_diff == 0. && row.nice_diff == 0. && row.irq_diff == 0. && row.softirq_diff == 0. && row.steal_diff == 0.) && graph {
                 let mut cpu_history = cpu_history_loop_clone.lock().unwrap();
                 cpu_history.push(CpuGraph {
                     hostname: hostname_port.to_string(),
@@ -160,17 +192,17 @@ fn main() {
                          row.load_5,
                          row.load_15,
                 );
-                row_counter+=1;
+                row_counter += 1;
             }
         }
-        let disk_details = disk_details(&values);
+        let disk_details = disk_details(&node_values);
         diff_disk_details(disk_details, &mut disk_presentation);
         for (host_disk, row) in &disk_presentation {
             if disk_first_capture && graph {
                 disk_first_capture = false;
             } else {
                 let mut disk_history = disk_history_loop_clone.lock().unwrap();
-                disk_history.push( DiskGraph {
+                disk_history.push(DiskGraph {
                     hostname: host_disk.split_whitespace().nth(0).unwrap().to_string(),
                     timestamp: row.timestamp,
                     disk: host_disk.split_whitespace().nth(1).unwrap().to_string(),
@@ -216,9 +248,67 @@ fn main() {
                          (row.reads_completed_diff + row.writes_completed_diff).round(),
                          (row.reads_bytes_diff / (1024 * 1024) as f64 + row.writes_bytes_diff / (1024 * 1024) as f64).round(),
                 );
-                row_counter+=1;
+                row_counter += 1;
             }
         }
+        let yugabyte_details = yugabyte_details(&node_values);
+        diff_yugabyte_details(yugabyte_details, &mut yugabyte_presentation);
+        for (hostname_port, row) in &yugabyte_presentation {
+            if ybio_first_capture && graph {
+                ybio_first_capture = false;
+            } else {
+                let mut yugabyte_history = yugabyte_history_loop_clone.lock().unwrap();
+                yugabyte_history.push(YBIOGraph {
+                    hostname: hostname_port.to_string(),
+                    timestamp: row.timestamp,
+                    glog_messages_total: row.glog_messages_total_diff,
+                    log_bytes_logged: row.log_bytes_logged_diff,
+                    log_reader_bytes_read: row.log_reader_bytes_read_diff,
+                    log_append_latency_count: row.log_append_latency_count_diff,
+                    log_append_latency_sum: row.log_append_latency_sum_diff,
+                    log_cache_disk_reads: row.log_cache_disk_reads_diff,
+                    rocksdb_flush_write_bytes: row.rocksdb_flush_write_bytes_diff,
+                    rocksdb_compact_read_bytes: row.rocksdb_compact_read_bytes_diff,
+                    rocksdb_compact_write_bytes: row.rocksdb_compact_write_bytes_diff,
+                    rocksdb_write_raw_block_micros_count: row.rocksdb_write_raw_block_micros_count_diff,
+                    rocksdb_write_raw_block_micros_sum: row.rocksdb_write_raw_block_micros_sum_diff,
+                    rocksdb_sst_read_micros_count: row.rocksdb_sst_read_micros_count_diff,
+                    rocksdb_sst_read_micros_sum: row.rocksdb_sst_read_micros_sum_diff,
+                });
+            }
+            if yb {
+                println!("{:50} {:7.2} | {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} | {:7.0} {:7.0} {:7.0} | {:10.2} {:7.2} {:10.2} {:7.2}",
+                         hostname_port,
+                         row.glog_messages_total_diff,
+                         row.log_bytes_logged_diff / (1024. * 1024.),
+                         row.log_reader_bytes_read_diff / (1024. * 1024.),
+                         row.log_append_latency_count_diff,
+                         if ((row.log_append_latency_sum_diff / row.log_append_latency_count_diff) / 1000.).is_nan() {
+                             0.
+                         } else {
+                             (row.log_append_latency_sum_diff / row.log_append_latency_count_diff) / 1000.
+                         },
+                         row.log_cache_disk_reads_diff,
+                         row.rocksdb_flush_write_bytes_diff / (1024. * 1024.),
+                         row.rocksdb_compact_read_bytes_diff / (1024. * 1024.),
+                         row.rocksdb_compact_write_bytes_diff / (1024. * 1024.),
+                         row.rocksdb_sst_read_micros_count_diff,
+                         if ((row.rocksdb_sst_read_micros_sum_diff / row.rocksdb_sst_read_micros_count_diff) / 1000.).is_nan() {
+                             0.
+                         } else {
+                             (row.rocksdb_sst_read_micros_sum_diff / row.rocksdb_sst_read_micros_count_diff) / 1000.
+                         },
+                         row.rocksdb_write_raw_block_micros_count_diff,
+                         if ((row.rocksdb_write_raw_block_micros_sum_diff / row.rocksdb_write_raw_block_micros_count_diff) / 1000.).is_nan() {
+                             0.
+                         } else {
+                             (row.rocksdb_write_raw_block_micros_sum_diff / row.rocksdb_write_raw_block_micros_count_diff) / 1000.
+                         },
+                );
+                row_counter += 1;
+            }
+        }
+
         if row_counter > lines_for_header {
             row_counter = 0;
         }
@@ -228,7 +318,7 @@ fn main() {
     }
 }
 
-fn print_header(cpu: bool, disk: bool) {
+fn print_header(cpu: bool, disk: bool, yb: bool) {
     if cpu {
         println!("{:30} {:>5} {:>5} | {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} | {:>7} {:>7} | {:>7} {:>7} | {:>7} {:>7} | {:>6} {:>6} {:>6}",
                  "hostname",
@@ -260,7 +350,7 @@ fn print_header(cpu: bool, disk: bool) {
                  "writes per second",
                  "discards per second",
                  "",
-                 "totals per second" ,
+                 "totals per second",
         );
         println!("{:30} {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>5} {:>5} {:>5} {:>8} | {:>8} | {:>5} {:>5}",
                  "hostname",
@@ -281,26 +371,43 @@ fn print_header(cpu: bool, disk: bool) {
                  "MBPS",
         );
     };
+    if yb {
+        println!("{:50} {:>7} | {:7} {:7} {:>7} {:>7} {:>7} | {:7} {:7} {:7} | {:>10} {:>7} {:>10} {:>7}",
+                 "hostname",
+                 "msg WIO",
+                 "log WMB",
+                 "log RMB",
+                 "log WIO",
+                 "Wlat ms",
+                 "log RIO",
+                 "fls WMB",
+                 "cmp RMB",
+                 "cmp WMB",
+                 "rdb RIO",
+                 "Rlat ms",
+                 "rdb WIO",
+                 "Wlat ms",
+        );
+    };
 }
 
 fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
-
     let cpu_data = data.lock().unwrap();
 
     let start_time = cpu_data.iter().map(|x| x.timestamp).min().unwrap();
     let end_time = cpu_data.iter().map(|x| x.timestamp).max().unwrap();
     let low_value: f64 = 0.0;
-    let high_value_cpu = cpu_data.iter().map(|x| x.idle).fold(0./0., f64::max);
-    let high_value_scheduler = cpu_data.iter().map(|x| x.scheduler_wait).fold(0./0., f64::max);
+    let high_value_cpu = cpu_data.iter().map(|x| x.idle).fold(0. / 0., f64::max);
+    let high_value_scheduler = cpu_data.iter().map(|x| x.scheduler_wait).fold(0. / 0., f64::max);
     let high_value = if high_value_cpu > high_value_scheduler {
         high_value_cpu
     } else {
         high_value_scheduler
     };
-    let root = BitMapBackend::new("cpu.png", (1200,1000))
+    let root = BitMapBackend::new("cpu.png", (1200, 1000))
         .into_drawing_area();
     let nr_servers = cpu_data.iter().map(|x| x.hostname.clone()).unique().count();
-    let multiroot = root.split_evenly((nr_servers,1));
+    let multiroot = root.split_evenly((nr_servers, 1));
 
     for (multiroot_nr, server) in (0..nr_servers).zip(cpu_data.iter().map(|x| x.hostname.clone()).unique()) {
         multiroot[multiroot_nr].fill(&WHITE).unwrap();
@@ -339,39 +446,38 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
 }
 
 fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
-
     let disk_data = data.lock().unwrap();
 
     let start_time = disk_data.iter().map(|x| x.timestamp).min().unwrap();
     let end_time = disk_data.iter().map(|x| x.timestamp).max().unwrap();
     let low_value_iops: f64 = 0.0;
-    let high_value_iops: f64 = if disk_data.iter().map(|x| (x.reads_completed + x.writes_completed)).fold(0./0., f64::max) == 0. {
+    let high_value_iops: f64 = if disk_data.iter().map(|x| (x.reads_completed + x.writes_completed)).fold(0. / 0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| (x.reads_completed + x.writes_completed)).fold(0./0., f64::max)
+        disk_data.iter().map(|x| (x.reads_completed + x.writes_completed)).fold(0. / 0., f64::max)
     };
     let low_value_mbps: f64 = 0.;
-    let high_value_mbps: f64 = if disk_data.iter().map(|x| (x.reads_bytes + x.writes_bytes)/(1024.*1024.)).fold(0./0., f64::max) == 0. {
+    let high_value_mbps: f64 = if disk_data.iter().map(|x| (x.reads_bytes + x.writes_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| (x.reads_bytes + x.writes_bytes)/(1024.*1024.)).fold(0./0., f64::max)
+        disk_data.iter().map(|x| (x.reads_bytes + x.writes_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max)
     };
-    let low_value_queue= 0.;
-    let high_value_queue = if disk_data.iter().map(|x| x.queue).fold(0./0., f64::max) == 0. {
+    let low_value_queue = 0.;
+    let high_value_queue = if disk_data.iter().map(|x| x.queue).fold(0. / 0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| x.queue).fold(0./0., f64::max)
+        disk_data.iter().map(|x| x.queue).fold(0. / 0., f64::max)
     };
     let low_value_latency = 0.;
-    let high_value_latency_read = if disk_data.iter().map(|x| (x.reads_time / x.reads_completed)*1000.).fold(0./0., f64::max) == 0. {
+    let high_value_latency_read = if disk_data.iter().map(|x| (x.reads_time / x.reads_completed) * 1000.).fold(0. / 0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| (x.reads_time / x.reads_completed)*1000.).fold(0./0., f64::max)
+        disk_data.iter().map(|x| (x.reads_time / x.reads_completed) * 1000.).fold(0. / 0., f64::max)
     };
-    let high_value_latency_write = if disk_data.iter().map(|x| (x.writes_time / x.writes_completed)*1000.).fold(0./0., f64::max) == 0. {
+    let high_value_latency_write = if disk_data.iter().map(|x| (x.writes_time / x.writes_completed) * 1000.).fold(0. / 0., f64::max) == 0. {
         1.
     } else {
-        disk_data.iter().map(|x| (x.writes_time / x.writes_completed)*1000.).fold(0./0., f64::max)
+        disk_data.iter().map(|x| (x.writes_time / x.writes_completed) * 1000.).fold(0. / 0., f64::max)
     };
     let high_value_latency = if high_value_latency_read > high_value_latency_write {
         high_value_latency_read
@@ -385,10 +491,10 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
     // nr_servers * nr_disks to give each disk a graph root.
     // nr_disks * 2 to give IOPS and MBPS their graph root.
 
-    let root = BitMapBackend::new("disk.png", (1200,((nr_servers * (nr_disks *3 ))*200).try_into().unwrap()))
+    let root = BitMapBackend::new("disk.png", (1200, (nr_servers * (nr_disks * 3) * 200).try_into().unwrap()))
         .into_drawing_area();
 
-    let multiroot = root.split_evenly(((nr_servers * (nr_disks*3)),1));
+    let multiroot = root.split_evenly((nr_servers * (nr_disks * 3), 1));
     let mut multiroot_nr = 0;
 
     for server in disk_data.iter().map(|x| x.hostname.clone()).unique() {
@@ -432,7 +538,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
                 .draw()
                 .unwrap();
 
-            multiroot_nr+=1;
+            multiroot_nr += 1;
 
             //MBPS
             multiroot[multiroot_nr].fill(&WHITE).unwrap();
@@ -452,7 +558,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
             context.draw_series(AreaSeries::new(disk_data
                                                     .iter()
                                                     .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, (x.reads_bytes + x.writes_bytes)/(1024.*1024.))), 0.0, GREEN)
+                                                    .map(|x| (x.timestamp, (x.reads_bytes + x.writes_bytes) / (1024. * 1024.))), 0.0, GREEN)
             )
                 .unwrap()
                 .label("read MBPS")
@@ -460,7 +566,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
             context.draw_series(AreaSeries::new(disk_data
                                                     .iter()
                                                     .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, (x.writes_bytes)/(1024.*1024.))), 0.0, RED)
+                                                    .map(|x| (x.timestamp, (x.writes_bytes) / (1024. * 1024.))), 0.0, RED)
             )
                 .unwrap()
                 .label("write MBPS")
@@ -472,7 +578,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
                 .draw()
                 .unwrap();
 
-            multiroot_nr+=1;
+            multiroot_nr += 1;
 
             //Queue depth and latencies
             multiroot[multiroot_nr].fill(&WHITE).unwrap();
@@ -497,7 +603,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
             context.draw_series(LineSeries::new(disk_data
                                                     .iter()
                                                     .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, (x.reads_time / x.reads_completed)*1000.)), GREEN)
+                                                    .map(|x| (x.timestamp, (x.reads_time / x.reads_completed) * 1000.)), GREEN)
             )
                 .unwrap()
                 .label("avg read latency")
@@ -505,15 +611,15 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
             context.draw_series(LineSeries::new(disk_data
                                                     .iter()
                                                     .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, (x.writes_time / x.writes_completed)*1000.)), RED)
+                                                    .map(|x| (x.timestamp, (x.writes_time / x.writes_completed) * 1000.)), RED)
             )
                 .unwrap()
                 .label("avg write latency")
                 .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
             context.draw_secondary_series(LineSeries::new(disk_data
-                                                    .iter()
-                                                    .filter(|x| x.hostname == server && x.disk == disk)
-                                                    .map(|x| (x.timestamp, x.queue )), BLACK)
+                                                              .iter()
+                                                              .filter(|x| x.hostname == server && x.disk == disk)
+                                                              .map(|x| (x.timestamp, x.queue)), BLACK)
             )
                 .unwrap()
                 .label("queue size")
@@ -525,10 +631,262 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
                 .draw()
                 .unwrap();
 
-            multiroot_nr+=1;
-
-
+            multiroot_nr += 1;
         }
+    }
+}
+
+fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
+    let yugabyte_data = yugabyte.lock().unwrap();
+    let low_value_mbps: f64 = 0.;
+    let high_value_mbps: f64 = if yugabyte_data.iter().map(|x| (x.log_reader_bytes_read + x.log_bytes_logged + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max) == 0. {
+        1.
+    } else {
+        yugabyte_data.iter().map(|x| (x.log_reader_bytes_read + x.log_bytes_logged + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max)
+    };
+    let low_value_iops: f64 = 0.;
+    let high_value_iops: f64 = if yugabyte_data.iter().map(|x| (x.glog_messages_total + x.log_cache_disk_reads + x.log_append_latency_count + x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count)).fold(0. / 0., f64::max) == 0. {
+        1.
+    } else {
+        yugabyte_data.iter().map(|x| (x.glog_messages_total + x.log_cache_disk_reads + x.log_append_latency_count + x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count)).fold(0. / 0., f64::max)
+    };
+    let low_value_latency: f64 = 0.;
+    let mut latency_vec = Vec::new();
+    latency_vec.push( if yugabyte_data.iter().map(|x| (x.log_append_latency_sum / x.log_append_latency_count) / 1000.).fold(0. / 0., f64::max) == 0. {
+        1.
+    } else {
+        yugabyte_data.iter().map(|x| (x.log_append_latency_sum / x.log_append_latency_count) / 1000.).fold(0. / 0., f64::max)
+    });
+    latency_vec.push( if yugabyte_data.iter().map(|x| (x.rocksdb_sst_read_micros_sum / x.rocksdb_sst_read_micros_count) / 1000.).fold(0. / 0., f64::max) == 0. {
+        1.
+    } else {
+        yugabyte_data.iter().map(|x| (x.rocksdb_sst_read_micros_sum / x.rocksdb_sst_read_micros_count) / 1000.).fold(0. / 0., f64::max)
+    });
+    latency_vec.push( if yugabyte_data.iter().map(|x| (x.rocksdb_write_raw_block_micros_sum / x.rocksdb_write_raw_block_micros_count) / 1000.).fold(0. / 0., f64::max) == 0. {
+        1.
+    } else {
+        yugabyte_data.iter().map(|x| (x.rocksdb_write_raw_block_micros_sum / x.rocksdb_write_raw_block_micros_count) / 1000.).fold(0. / 0., f64::max)
+    });
+    let high_value_latency: f64 = latency_vec.iter().cloned().fold(0. / 0., f64::max);
+
+    let start_time = yugabyte_data.iter().map(|x| x.timestamp).min().unwrap();
+    let end_time = yugabyte_data.iter().map(|x| x.timestamp).max().unwrap();
+
+    let nr_servers = yugabyte_data.iter().map(|x| x.hostname.clone()).unique().count();
+
+    let root = BitMapBackend::new("yugabyte.png", (1200, ((nr_servers * 3) * 200).try_into().unwrap()))
+        .into_drawing_area();
+
+    let multiroot = root.split_evenly((nr_servers * 3, 1));
+    let mut multiroot_nr = 0;
+
+    for server in yugabyte_data.iter().map(|x| x.hostname.clone()).unique() {
+        multiroot[multiroot_nr].fill(&WHITE).unwrap();
+        let mut context = ChartBuilder::on(&multiroot[multiroot_nr])
+            .x_label_area_size(60)
+            .y_label_area_size(50)
+            .right_y_label_area_size(50)
+            .caption(&server, ("sans-serif", 20))
+            .build_cartesian_2d(start_time..end_time, low_value_mbps..high_value_mbps)
+            .unwrap();
+        context.configure_mesh()
+            .x_labels(4)
+            .x_label_formatter(&|x| x.to_rfc3339().to_string())
+            .y_desc("MB per second")
+            .draw()
+            .unwrap();
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.log_bytes_logged + x.log_reader_bytes_read + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, GREEN)
+        )
+            .unwrap()
+            .label("WAL write MBPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.log_reader_bytes_read + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, BLACK)
+        )
+            .unwrap()
+            .label("WAL read MBPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, RED)
+        )
+            .unwrap()
+            .label("RocksDB flush write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, BLUE)
+        )
+            .unwrap()
+            .label("RocksDB compaction read")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, x.rocksdb_compact_write_bytes / (1024. * 1024.))), 0.0, YELLOW)
+        )
+            .unwrap()
+            .label("RocksDB compaction write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], YELLOW.filled()));
+        context.configure_series_labels()
+            .border_style(BLACK)
+            .background_style(WHITE.mix(0.7))
+            .position(UpperLeft)
+            .draw()
+            .unwrap();
+
+        multiroot_nr += 1;
+        //}
+        multiroot[multiroot_nr].fill(&WHITE).unwrap();
+        let mut context = ChartBuilder::on(&multiroot[multiroot_nr])
+            .x_label_area_size(60)
+            .y_label_area_size(50)
+            .right_y_label_area_size(50)
+            .caption(&server, ("sans-serif", 20))
+            .build_cartesian_2d(start_time..end_time, low_value_iops..high_value_iops)
+            .unwrap();
+        context.configure_mesh()
+            .x_labels(4)
+            .x_label_formatter(&|x| x.to_rfc3339().to_string())
+            .y_desc("IO per second")
+            .draw()
+            .unwrap();
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.glog_messages_total + x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, GREEN)
+        )
+            .unwrap()
+            .label("glog messages write IOPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLACK)
+        )
+            .unwrap()
+            .label("log append write IOPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, RED)
+        )
+            .unwrap()
+            .label("log cache read IOPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLUE)
+        )
+            .unwrap()
+            .label("RocksDB write raw block IOPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.rocksdb_sst_read_micros_count))), 0.0, YELLOW)
+        )
+            .unwrap()
+            .label("RocksDB sst read IOPS")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], YELLOW.filled()));
+        context.configure_series_labels()
+            .border_style(BLACK)
+            .background_style(WHITE.mix(0.7))
+            .position(UpperLeft)
+            .draw()
+            .unwrap();
+
+        multiroot_nr += 1;
+        //}
+        multiroot[multiroot_nr].fill(&WHITE).unwrap();
+        let mut context = ChartBuilder::on(&multiroot[multiroot_nr])
+            .x_label_area_size(60)
+            .y_label_area_size(50)
+            .right_y_label_area_size(50)
+            .caption(&server, ("sans-serif", 20))
+            .build_cartesian_2d(start_time..end_time, low_value_latency..high_value_latency)
+            .unwrap();
+        context.configure_mesh()
+            .x_labels(4)
+            .x_label_formatter(&|x| x.to_rfc3339().to_string())
+            .y_desc("latency (ms)")
+            .draw()
+            .unwrap();
+        context.draw_series(LineSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, ((x.log_append_latency_sum / x.log_append_latency_count) / 1000.))), GREEN)
+        )
+            .unwrap()
+            .label("WAL log write latency")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
+        context.draw_series(LineSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, ((x.rocksdb_write_raw_block_micros_sum / x.rocksdb_write_raw_block_micros_count) / 1000.))), RED)
+        )
+            .unwrap()
+            .label("RocksDB write raw block latency")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
+        context.draw_series(LineSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, ((x.rocksdb_sst_read_micros_sum / x.rocksdb_sst_read_micros_count) / 1000.))), BLUE)
+        )
+            .unwrap()
+            .label("RocksDB sst read latency")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
+        /*
+    context.draw_series(AreaSeries::new(yugabyte_data
+                                            .iter()
+                                            .filter(|x| x.hostname == server)
+                                            .map(|x| (x.timestamp, (x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLACK)
+    )
+        .unwrap()
+        .label("log append write IOPS")
+        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
+    context.draw_series(AreaSeries::new(yugabyte_data
+                                            .iter()
+                                            .filter(|x| x.hostname == server)
+                                            .map(|x| (x.timestamp, (x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, RED)
+    )
+        .unwrap()
+        .label("log cache read IOPS")
+        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
+    context.draw_series(AreaSeries::new(yugabyte_data
+                                            .iter()
+                                            .filter(|x| x.hostname == server)
+                                            .map(|x| (x.timestamp, (x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLUE)
+    )
+        .unwrap()
+        .label("RocksDB write raw block IOPS")
+        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
+    context.draw_series(AreaSeries::new(yugabyte_data
+                                            .iter()
+                                            .filter(|x| x.hostname == server)
+                                            .map(|x| (x.timestamp, (x.rocksdb_sst_read_micros_count))), 0.0, YELLOW)
+    )
+        .unwrap()
+        .label("RocksDB sst read IOPS")
+        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], YELLOW.filled()));
+     */
+        context.configure_series_labels()
+            .border_style(BLACK)
+            .background_style(WHITE.mix(0.7))
+            .position(UpperLeft)
+            .draw()
+            .unwrap();
+
+        multiroot_nr += 1;
     }
 }
 

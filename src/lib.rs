@@ -63,6 +63,56 @@ pub struct DiskHost {
 }
 
 #[derive(Debug)]
+pub struct YugabyteIODetails {
+    pub hostname_port: String,
+    pub timestamp: DateTime<Utc>,
+    pub glog_messages_total: f64,
+    pub log_bytes_logged: f64,
+    pub log_reader_bytes_read: f64,
+    pub log_append_latency_count: f64,
+    pub log_append_latency_sum: f64,
+    pub log_cache_disk_reads: f64,
+    pub rocksdb_flush_write_bytes: f64,
+    pub rocksdb_compact_read_bytes: f64,
+    pub rocksdb_compact_write_bytes: f64,
+    pub rocksdb_write_raw_block_micros_count: f64,
+    pub rocksdb_write_raw_block_micros_sum: f64,
+    pub rocksdb_sst_read_micros_count: f64,
+    pub rocksdb_sst_read_micros_sum: f64,
+}
+
+#[derive(Debug)]
+pub struct YBIOPresentation {
+    pub timestamp: DateTime<Utc>,
+    pub glog_messages_total_diff: f64,
+    pub glog_messages_total_counter: f64,
+    pub log_bytes_logged_diff: f64,
+    pub log_bytes_logged_counter: f64,
+    pub log_reader_bytes_read_diff: f64,
+    pub log_reader_bytes_read_counter: f64,
+    pub log_append_latency_count_diff: f64,
+    pub log_append_latency_count_counter: f64,
+    pub log_append_latency_sum_diff: f64,
+    pub log_append_latency_sum_counter: f64,
+    pub log_cache_disk_reads_diff: f64,
+    pub log_cache_disk_reads_counter: f64,
+    pub rocksdb_flush_write_bytes_diff: f64,
+    pub rocksdb_flush_write_bytes_counter: f64,
+    pub rocksdb_compact_read_bytes_diff: f64,
+    pub rocksdb_compact_read_bytes_counter: f64,
+    pub rocksdb_compact_write_bytes_diff: f64,
+    pub rocksdb_compact_write_bytes_counter: f64,
+    pub rocksdb_write_raw_block_micros_count_diff: f64,
+    pub rocksdb_write_raw_block_micros_count_counter: f64,
+    pub rocksdb_write_raw_block_micros_sum_diff: f64,
+    pub rocksdb_write_raw_block_micros_sum_counter: f64,
+    pub rocksdb_sst_read_micros_count_diff: f64,
+    pub rocksdb_sst_read_micros_count_counter: f64,
+    pub rocksdb_sst_read_micros_sum_diff: f64,
+    pub rocksdb_sst_read_micros_sum_counter: f64,
+}
+
+#[derive(Debug)]
 pub struct DiskDetail {
     pub disk_name: String,
     pub reads_completed: f64,
@@ -162,12 +212,15 @@ pub fn read_node_exporter_into_map(
     pool.scope(move |s| {
         for host in hosts {
             for port in ports {
-                let tx = tx.clone();
-                s.spawn(move |_| {
-                    let detail_snapshot_time = Local::now();
-                    let node_exporter_values = read_node_exporter(&host, &port);
-                    tx.send((format!("{}:{}", host, port), detail_snapshot_time, node_exporter_values)).expect("error sending data via tx (node_exporter)");
-                });
+                let endpoints = vec!["metrics", "prometheus-metrics"];
+                for endpoint in endpoints {
+                    let tx = tx.clone();
+                    s.spawn(move |_| {
+                        let detail_snapshot_time = Local::now();
+                        let node_exporter_values = read_node_exporter(&host, &port, &endpoint);
+                        tx.send((format!("{}:{}:{}", host, port, endpoint), detail_snapshot_time, node_exporter_values)).expect("error sending data via tx (node_exporter)");
+                    });
+                }
             }
         }
     });
@@ -181,12 +234,13 @@ pub fn read_node_exporter_into_map(
 pub fn read_node_exporter(
     host: &str,
     port: &str,
+    endpoint: &str,
 ) -> Vec<NodeExporterValues> {
     if !scan_port_addr(format!("{}:{}", host, port)) {
         println!("Warning! hostname:port {}:{} cannot be reached, skipping (node_exporter)", host, port);
         return parse_node_exporter(String::from(""));
     };
-    let data_from_http = reqwest::blocking::get(format!("http://{}:{}/metrics", host, port))
+    let data_from_http = reqwest::blocking::get(format!("http://{}:{}/{}", host, port, endpoint))
         .unwrap_or_else(|e| {
             eprintln!("Fatal: error reading from URL: {}", e);
             process::exit(1);
@@ -239,7 +293,7 @@ fn parse_node_exporter(node_exporter_data: String) -> Vec<NodeExporterValues> {
                 Value::Untyped(val) => {
                     // it turns out summary type _sum and _count values are untyped values.
                     // so I remove them here.
-                    if sample.metric.ends_with("_sum") || sample.metric.ends_with("_count") { continue; };
+                    //if sample.metric.ends_with("_sum") || sample.metric.ends_with("_count") { continue; };
                     // untyped: not sure what it is.
                     // I would say: probably a counter.
                     nodeexportervalues.push(
@@ -254,9 +308,203 @@ fn parse_node_exporter(node_exporter_data: String) -> Vec<NodeExporterValues> {
                         }
                     )
                 }
-                Value::Histogram(_val) => {}
                 Value::Summary(_val) => {}
+                Value::Histogram(_val) => {}
             }
+        }
+        // glog_(info|warning|error)_messages => glog_messages_total
+        // counter, in written messages (write()) (IOPS).
+        // this is the number of logging messages written as part of the logging framework, done via synchronous write() call.
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "glog_info_messages").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name.starts_with("glog_") ) {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "glog_messages_total".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name.starts_with("glog_")).map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name.starts_with("glog_")).map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        };
+        // log_bytes_logged
+        // counter, in bytes (MBPS).
+        // this is the number of bytes written as part of Yugabyte WAL logging.
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_bytes_logged").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_bytes_logged") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_bytes_logged".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_bytes_logged").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_bytes_logged").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        };
+        // log_reader_bytes_read
+        // counter, in bytes (MBPS).
+        // this is the number of bytes read from WAL. Is this all reads?
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_reader_bytes_read").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_reader_bytes_read") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_reader_bytes_read".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_reader_bytes_read").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_reader_bytes_read").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        };
+        // log_cache_disk_reads
+        // counter, in # of reads (IOPS).
+        // this is the number of bytes written as part of Yugabyte WAL logging.
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_cache_disk_reads").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_cache_disk_reads") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_cache_disk_reads".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_cache_disk_reads").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_cache_disk_reads").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        };
+        // log_append_latency_(count|sum)
+        // both counters,
+        // count = number of log append (write: writev()) occasions. (IOPS)
+        // sum = total time spent writing in microseconds (us).
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_append_latency_count").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_append_latency_count") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_append_latency_count".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_append_latency_count").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_append_latency_count").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_append_latency_sum") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_append_latency_sum".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_append_latency_sum").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_append_latency_sum").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        }
+        // rocksdb_flush_write_bytes
+        // counter, number in bytes. (MBPS)
+        // this statistic does not seem to be registering the write bytes as they happen, but rather after a transaction?
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_flush_write_bytes").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_flush_write_bytes") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_flush_write_bytes".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_flush_write_bytes").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_flush_write_bytes").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        }
+        // rocksdb_compact_read_bytes
+        // counter, number in bytes. (MBPS)
+        // this statistic does not seem to be registering the read bytes as they happen, but rather after a transaction?
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_read_bytes").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_compact_read_bytes") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_compact_read_bytes".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_read_bytes").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_read_bytes").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        }
+        // rocksdb_compact_write_bytes
+        // counter, number in bytes. (MBPS)
+        // this statistic does not seem to be registering the write bytes as they happen, but rather after a transaction?
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_write_bytes").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_compact_write_bytes") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_compact_write_bytes".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_write_bytes").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_write_bytes").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        }
+        // rocksdb_write_raw_block_micros_(count|sum)
+        // count = number in write IOs (write()). (IOPS)
+        // sum = total time spent writing in microseconds (us).
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_count").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_count") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_write_raw_block_micros_count".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_count").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_count").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_sum") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_write_raw_block_micros_sum".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_sum").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_sum").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        }
+        // rocksdb_sst_read_micros_(count|sum)
+        // count = number in read IOs (pread64()). (IOPS)
+        // sum = total time spent writing in microseconds (us).
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_count").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_count") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_sst_read_micros_count".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_count").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_count").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_sum") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "rocksdb_sst_read_micros_sum".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_sum").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_sum").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
         }
         // softnet: node_softnet_processed_total
         if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "node_softnet_processed_total").count() > 0 {
@@ -472,29 +720,61 @@ pub fn cpu_details(
 {
     let mut details: Vec<CpuDetails> = Vec::new();
     for (hostname_port, node_exporter_vector) in values {
-        details.push( CpuDetails {
-            hostname_port: hostname_port.to_string(),
-            timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
-            load_1: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            load_5: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load5").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            load_15: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load15").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_idle: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_idle" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_irq: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_irq" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_softirq: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_softirq" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_system: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_system" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_user: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_user" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_iowait: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_iowait" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_nice: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_nice" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_steal: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_steal" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_guest_user: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total" && r.node_exporter_labels == "_user" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            cpu_guest_nice: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total" && r.node_exporter_labels == "_nice" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            schedstat_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_running_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            schedstat_waiting: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_waiting_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            procs_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_running").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            procs_blocked: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_blocked").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            context_switches: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_context_switches_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
-            interrupts: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_intr_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
-        });
+        if node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").count() > 0 {
+            details.push(CpuDetails {
+                hostname_port: hostname_port.to_string(),
+                timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
+                load_1: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                load_5: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load5").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                load_15: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load15").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_idle: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_idle" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_irq: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_irq" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_softirq: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_softirq" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_system: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_system" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_user: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_user" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_iowait: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_iowait" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_nice: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_nice" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_steal: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_seconds_total" && r.node_exporter_labels == "_steal" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_guest_user: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total" && r.node_exporter_labels == "_user" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                cpu_guest_nice: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_cpu_guest_seconds_total" && r.node_exporter_labels == "_nice" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                schedstat_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_running_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                schedstat_waiting: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_schedstat_waiting_seconds_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                procs_running: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_running").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                procs_blocked: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_procs_blocked").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                context_switches: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_context_switches_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                interrupts: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_intr_total").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            });
+        };
+    }
+    details
+}
+
+pub fn yugabyte_details(
+    values: &HashMap<String, Vec<NodeExporterValues>>
+) -> Vec<YugabyteIODetails>
+{
+    let mut details: Vec<YugabyteIODetails> = Vec::new();
+    for (hostname_port, node_exporter_vector) in values {
+        if node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged").count() > 0 {
+            details.push(YugabyteIODetails {
+                hostname_port: hostname_port.to_string(),
+                timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
+                glog_messages_total: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "glog_messages_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_bytes_logged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_reader_bytes_read: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_reader_bytes_read" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_append_latency_count: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_append_latency_count" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_append_latency_sum: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_append_latency_sum" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_cache_disk_reads: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_cache_disk_reads" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_flush_write_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_flush_write_bytes" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_compact_read_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_read_bytes" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_compact_write_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_compact_write_bytes" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_write_raw_block_micros_count: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_count" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_write_raw_block_micros_sum: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_write_raw_block_micros_sum" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_sst_read_micros_count: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_count" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                rocksdb_sst_read_micros_sum: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_sst_read_micros_sum" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+            });
+            //println!("{}", node_exporter_vector.iter().filter(|r| r.node_exporter_name == "rocksdb_flush_write_bytes" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap());
+        };
     }
     details
 }
@@ -505,35 +785,110 @@ pub fn disk_details(
 {
     let mut details: Vec<DiskHost> = Vec::new();
     for (hostname_port, node_exporter_vector) in values {
-        let mut diskstats: Vec<DiskDetail> = Vec::new();
-        for row in node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total").filter(|r| ! r.node_exporter_labels.contains("dm-")).map(|x| x.node_exporter_labels.clone()) {
-            diskstats.push( DiskDetail {
-                disk_name: row[1..].to_string(),
-                reads_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                writes_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_writes_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                discards_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discards_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
-                reads_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                writes_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_writes_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                discards_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discards_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
-                reads_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_read_bytes_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                writes_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_written_bytes_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                discards_sectors: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discarded_sectors_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
-                reads_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_read_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                writes_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_write_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                discards_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discard_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
-                total_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_io_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-                queue: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_io_time_weighted_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
-            });
-        }
-        details.push(
-            DiskHost {
-                hostname_port: hostname_port.to_string(),
-                timestamp: node_exporter_vector.iter().map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
-                diskdetail: diskstats,
+        if node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total").count() > 0 {
+            let mut diskstats: Vec<DiskDetail> = Vec::new();
+            for row in node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total").filter(|r| !r.node_exporter_labels.contains("dm-")).map(|x| x.node_exporter_labels.clone()) {
+                diskstats.push(DiskDetail {
+                    disk_name: row[1..].to_string(),
+                    reads_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    writes_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_writes_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    discards_completed: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discards_completed_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
+                    reads_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_reads_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    writes_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_writes_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    discards_merged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discards_merged_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
+                    reads_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_read_bytes_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    writes_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_written_bytes_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    discards_sectors: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discarded_sectors_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
+                    reads_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_read_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    writes_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_write_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    discards_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_discard_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
+                    total_time: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_io_time_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                    queue: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_disk_io_time_weighted_seconds_total" && r.node_exporter_labels == row).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                });
             }
-        );
+            details.push(
+                DiskHost {
+                    hostname_port: hostname_port.to_string(),
+                    timestamp: node_exporter_vector.iter().map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
+                    diskdetail: diskstats,
+                }
+            );
+        }
     }
     details
+}
+
+pub fn diff_yugabyte_details(
+    values: Vec<YugabyteIODetails>,
+    yugabyte_presentation: &mut BTreeMap<String, YBIOPresentation>,
+) {
+    for yugabyte_details in values {
+        match yugabyte_presentation.get_mut( &yugabyte_details.hostname_port) {
+            Some(row) => {
+               let time_difference = yugabyte_details.timestamp.signed_duration_since(row.timestamp).num_milliseconds() as f64 / 1000.;
+                *row = YBIOPresentation {
+                    timestamp: yugabyte_details.timestamp,
+                    glog_messages_total_diff: (yugabyte_details.glog_messages_total - row.glog_messages_total_counter)/time_difference,
+                    glog_messages_total_counter: yugabyte_details.glog_messages_total,
+                    log_bytes_logged_diff: (yugabyte_details.log_bytes_logged - row.log_bytes_logged_counter)/time_difference,
+                    log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
+                    log_reader_bytes_read_diff: (yugabyte_details.log_reader_bytes_read - row.log_reader_bytes_read_counter)/time_difference,
+                    log_reader_bytes_read_counter: yugabyte_details.log_reader_bytes_read,
+                    log_append_latency_count_diff: (yugabyte_details.log_append_latency_count - row.log_append_latency_count_counter)/time_difference,
+                    log_append_latency_count_counter: yugabyte_details.log_append_latency_count,
+                    log_append_latency_sum_diff: (yugabyte_details.log_append_latency_sum - row.log_append_latency_sum_counter)/time_difference,
+                    log_append_latency_sum_counter: yugabyte_details.log_append_latency_sum,
+                    log_cache_disk_reads_diff: (yugabyte_details.log_cache_disk_reads - row.log_cache_disk_reads_counter)/time_difference,
+                    log_cache_disk_reads_counter: yugabyte_details.log_cache_disk_reads,
+                    rocksdb_flush_write_bytes_diff: (yugabyte_details.rocksdb_flush_write_bytes - row.rocksdb_flush_write_bytes_counter)/time_difference,
+                    rocksdb_flush_write_bytes_counter: yugabyte_details.rocksdb_flush_write_bytes,
+                    rocksdb_compact_read_bytes_diff: (yugabyte_details.rocksdb_compact_read_bytes - row.rocksdb_compact_read_bytes_counter)/time_difference,
+                    rocksdb_compact_read_bytes_counter: yugabyte_details.rocksdb_compact_read_bytes,
+                    rocksdb_compact_write_bytes_diff: (yugabyte_details.rocksdb_compact_write_bytes - row.rocksdb_compact_write_bytes_counter)/time_difference,
+                    rocksdb_compact_write_bytes_counter: yugabyte_details.rocksdb_compact_write_bytes,
+                    rocksdb_write_raw_block_micros_count_diff: (yugabyte_details.rocksdb_write_raw_block_micros_count - row.rocksdb_write_raw_block_micros_count_counter)/time_difference,
+                    rocksdb_write_raw_block_micros_count_counter: yugabyte_details.rocksdb_write_raw_block_micros_count,
+                    rocksdb_write_raw_block_micros_sum_diff: (yugabyte_details.rocksdb_write_raw_block_micros_sum - row.rocksdb_write_raw_block_micros_sum_counter)/time_difference,
+                    rocksdb_write_raw_block_micros_sum_counter: yugabyte_details.rocksdb_write_raw_block_micros_sum,
+                    rocksdb_sst_read_micros_count_diff: (yugabyte_details.rocksdb_sst_read_micros_count - row.rocksdb_sst_read_micros_count_counter)/time_difference,
+                    rocksdb_sst_read_micros_count_counter: yugabyte_details.rocksdb_sst_read_micros_count,
+                    rocksdb_sst_read_micros_sum_diff: (yugabyte_details.rocksdb_sst_read_micros_sum - row.rocksdb_sst_read_micros_sum_counter)/time_difference,
+                    rocksdb_sst_read_micros_sum_counter:yugabyte_details.rocksdb_sst_read_micros_sum,
+                }
+            },
+            None => {
+                yugabyte_presentation.insert( yugabyte_details.hostname_port, YBIOPresentation {
+                    timestamp: yugabyte_details.timestamp,
+                    glog_messages_total_diff: 0.,
+                    glog_messages_total_counter: yugabyte_details.glog_messages_total,
+                    log_bytes_logged_diff: 0.,
+                    log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
+                    log_reader_bytes_read_diff: 0.0,
+                    log_reader_bytes_read_counter: yugabyte_details.log_reader_bytes_read,
+                    log_append_latency_count_diff: 0.,
+                    log_append_latency_count_counter: yugabyte_details.log_append_latency_count,
+                    log_append_latency_sum_diff: 0.,
+                    log_append_latency_sum_counter: yugabyte_details.log_append_latency_sum,
+                    log_cache_disk_reads_diff: 0.,
+                    log_cache_disk_reads_counter: yugabyte_details.log_cache_disk_reads,
+                    rocksdb_flush_write_bytes_diff: 0.,
+                    rocksdb_flush_write_bytes_counter: yugabyte_details.rocksdb_flush_write_bytes,
+                    rocksdb_compact_read_bytes_diff: 0.,
+                    rocksdb_compact_read_bytes_counter: yugabyte_details.rocksdb_compact_read_bytes,
+                    rocksdb_compact_write_bytes_diff: 0.,
+                    rocksdb_compact_write_bytes_counter: yugabyte_details.rocksdb_compact_write_bytes,
+                    rocksdb_write_raw_block_micros_count_diff: 0.,
+                    rocksdb_write_raw_block_micros_count_counter: yugabyte_details.rocksdb_write_raw_block_micros_count,
+                    rocksdb_write_raw_block_micros_sum_diff: 0.,
+                    rocksdb_write_raw_block_micros_sum_counter: yugabyte_details.rocksdb_write_raw_block_micros_sum,
+                    rocksdb_sst_read_micros_count_diff:  0.,
+                    rocksdb_sst_read_micros_count_counter: yugabyte_details.rocksdb_sst_read_micros_count,
+                    rocksdb_sst_read_micros_sum_diff: 0.,
+                    rocksdb_sst_read_micros_sum_counter:yugabyte_details.rocksdb_sst_read_micros_sum,
+                });
+            },
+        }
+    }
 }
 
 pub fn diff_cpu_details(
@@ -630,7 +985,7 @@ pub fn diff_disk_details(
 ) {
     for disk_details in values {
         for disk in disk_details.diskdetail {
-            match disk_presentation.get_mut(format!("{} {}", &disk_details.hostname_port, disk.disk_name).as_str()) {
+            match disk_presentation.get_mut(format!("{} {}", &disk_details.hostname_port.clone(), disk.disk_name).as_str()) {
                Some(row) => {
                     let time_difference = disk_details.timestamp.signed_duration_since(row.timestamp).num_milliseconds() as f64 / 1000.0;
                     *row = DiskPresentation {
@@ -702,3 +1057,33 @@ pub fn diff_disk_details(
         }
     }
 }
+
+/*
+let yugabytestats = YugabyteIO {
+log_bytes_logged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap_or_default(),
+rocksdb_flush_write_bytes: 0.0,
+rocskdb_compact_read_bytes: 0.0,
+rocksdb_compact_write_bytes: 0.0,
+};
+
+ */
+/*
+match yugabyte_presentation.get_mut(&disk_details.hostname_port.clone()) {
+Some(row) => {
+let time_difference = disk_details.timestamp.signed_duration_since(row.timestamp).num_milliseconds() as f64 / 1000.;
+*row = YBIOPresentation {
+timestamp: disk_details.timestamp,
+log_bytes_logged_diff: (disk_details.yugabyte_io.log_bytes_logged - row.log_bytes_logged_counter)/time_difference,
+log_bytes_logged_counter: disk_details.yugabyte_io.log_bytes_logged,
+}
+},
+None => {
+yugabyte_presentation.insert(disk_details.hostname_port.clone(), YBIOPresentation {
+timestamp: disk_details.timestamp,
+log_bytes_logged_diff: 0.,
+log_bytes_logged_counter: disk_details.yugabyte_io.log_bytes_logged,
+});
+},
+}
+
+ */
