@@ -701,7 +701,7 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
             .x_label_area_size(60)
             .y_label_area_size(50)
             .right_y_label_area_size(50)
-            .caption(&server, ("sans-serif", 20))
+            .caption(format!("{} {}", &server, "Bandwidth (MBPS)"), ("sans-serif", 20))
             .build_cartesian_2d(start_time..end_time, low_value_mbps..high_value_mbps)
             .unwrap();
         context.configure_mesh()
@@ -758,13 +758,13 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
             .unwrap();
 
         multiroot_nr += 1;
-        //}
+
         multiroot[multiroot_nr].fill(&WHITE).unwrap();
         let mut context = ChartBuilder::on(&multiroot[multiroot_nr])
             .x_label_area_size(60)
             .y_label_area_size(50)
             .right_y_label_area_size(50)
-            .caption(&server, ("sans-serif", 20))
+            .caption(format!("{} {}", &server, "IO per second (IOPS)"), ("sans-serif", 20))
             .build_cartesian_2d(start_time..end_time, low_value_iops..high_value_iops)
             .unwrap();
         context.configure_mesh()
@@ -821,13 +821,13 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
             .unwrap();
 
         multiroot_nr += 1;
-        //}
+
         multiroot[multiroot_nr].fill(&WHITE).unwrap();
         let mut context = ChartBuilder::on(&multiroot[multiroot_nr])
             .x_label_area_size(60)
             .y_label_area_size(50)
             .right_y_label_area_size(50)
-            .caption(&server, ("sans-serif", 20))
+            .caption(format!("{} {}", &server, "latency (ms)"), ("sans-serif", 20))
             .build_cartesian_2d(start_time..end_time, low_value_latency..high_value_latency)
             .unwrap();
         context.configure_mesh()
