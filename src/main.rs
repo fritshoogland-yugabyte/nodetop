@@ -95,6 +95,9 @@ struct Opts {
     /// create graph
     #[structopt(short, long)]
     graph: bool,
+    /// graph identification addition
+    #[structopt(long)]
+    graph_addition: Option<String>,
 }
 
 fn main() {
@@ -109,6 +112,12 @@ fn main() {
     let interval = options.interval as u64;
     let lines_for_header = options.lines_for_header as u64;
     let graph = options.graph as bool;
+
+    let graph_name_addition = match options.graph_addition {
+        Some(addition) => format!("_{}", addition),
+        None => "".to_string(),
+    };
+    //let graph_name_addition = graph_name_addition_string.as_str();
 
     if !cpu && !disk && !yb {
         Opts::clap().print_help().unwrap();
@@ -131,9 +140,9 @@ fn main() {
 
     ctrlc::set_handler(move || {
         if graph {
-            draw_cpu(&cpu_history_ctrlc_clone);
-            draw_disk(&disk_history_ctrlc_clone);
-            draw_yugabyte(&yugabyte_history_ctrlc_clone);
+            draw_cpu(&cpu_history_ctrlc_clone, graph_name_addition.clone());
+            draw_disk(&disk_history_ctrlc_clone, graph_name_addition.clone());
+            draw_yugabyte(&yugabyte_history_ctrlc_clone, graph_name_addition.clone());
         }
         process::exit(0);
     }).unwrap();
@@ -401,7 +410,7 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
     };
 }
 
-fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
+fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>, graph_name_addition: String) {
     let cpu_data = data.lock().unwrap();
 
     let start_time = cpu_data.iter().map(|x| x.timestamp).min().unwrap();
@@ -414,7 +423,8 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
     } else {
         high_value_scheduler
     };
-    let root = BitMapBackend::new("cpu.png", (1200, 1000))
+    let filename = format!("cpu{}.png", graph_name_addition);
+    let root = BitMapBackend::new(&filename, (1200, 1000))
         .into_drawing_area();
     let nr_servers = cpu_data.iter().map(|x| x.hostname.clone()).unique().count();
     let multiroot = root.split_evenly((nr_servers, 1));
@@ -455,7 +465,7 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>) {
     }
 }
 
-fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
+fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>, graph_name_addition: String) {
     let disk_data = data.lock().unwrap();
 
     let start_time = disk_data.iter().map(|x| x.timestamp).min().unwrap();
@@ -501,7 +511,8 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
     // nr_servers * nr_disks to give each disk a graph root.
     // nr_disks * 2 to give IOPS and MBPS their graph root.
 
-    let root = BitMapBackend::new("disk.png", (1200, (nr_servers * (nr_disks * 3) * 200).try_into().unwrap()))
+    let filename = format!("disk{}.png", graph_name_addition);
+    let root = BitMapBackend::new(&filename, (1200, (nr_servers * (nr_disks * 3) * 200).try_into().unwrap()))
         .into_drawing_area();
 
     let multiroot = root.split_evenly((nr_servers * (nr_disks * 3), 1));
@@ -646,7 +657,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>) {
     }
 }
 
-fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
+fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>, graph_name_addition: String) {
     let yugabyte_data = yugabyte.lock().unwrap();
     let low_value_mbps: f64 = 0.;
     let high_value_mbps: f64 = if yugabyte_data.iter().map(|x| (x.log_reader_bytes_read + x.log_bytes_logged + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max) == 0. {
@@ -689,7 +700,8 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
 
     let nr_servers = yugabyte_data.iter().map(|x| x.hostname.clone()).unique().count();
 
-    let root = BitMapBackend::new("yugabyte.png", (1200, ((nr_servers * 3) * 200).try_into().unwrap()))
+    let filename = format!("yugabyte{}.png", graph_name_addition);
+    let root = BitMapBackend::new(&filename, (1200, ((nr_servers * 3) * 200).try_into().unwrap()))
         .into_drawing_area();
 
     let multiroot = root.split_evenly((nr_servers * 3, 1));
@@ -713,15 +725,7 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.log_bytes_logged + x.log_reader_bytes_read + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, GREEN)
-        )
-            .unwrap()
-            .label("WAL write MBPS")
-            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
-        context.draw_series(AreaSeries::new(yugabyte_data
-                                                .iter()
-                                                .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.log_reader_bytes_read + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, BLACK)
+                                                .map(|x| (x.timestamp, (x.log_reader_bytes_read + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes + x.rocksdb_flush_write_bytes + x.log_bytes_logged) / (1024. * 1024.))), 0.0, BLACK)
         )
             .unwrap()
             .label("WAL read MBPS")
@@ -729,15 +733,7 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, RED)
-        )
-            .unwrap()
-            .label("RocksDB flush write")
-            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
-        context.draw_series(AreaSeries::new(yugabyte_data
-                                                .iter()
-                                                .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.))), 0.0, BLUE)
+                                                .map(|x| (x.timestamp, (x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes + x.rocksdb_flush_write_bytes + x.log_bytes_logged) / (1024. * 1024.))), 0.0, BLUE)
         )
             .unwrap()
             .label("RocksDB compaction read")
@@ -745,11 +741,27 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, x.rocksdb_compact_write_bytes / (1024. * 1024.))), 0.0, YELLOW)
+                                                .map(|x| (x.timestamp, (x.rocksdb_compact_write_bytes + x.rocksdb_flush_write_bytes + x.log_bytes_logged) / (1024. * 1024.))), 0.0, YELLOW)
         )
             .unwrap()
             .label("RocksDB compaction write")
             .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], YELLOW.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.rocksdb_flush_write_bytes + x.log_bytes_logged) / (1024. * 1024.))), 0.0, RED)
+        )
+            .unwrap()
+            .label("RocksDB flush write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, x.log_bytes_logged / (1024. * 1024.))), 0.0, GREEN)
+        )
+            .unwrap()
+            .label("WAL log write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
         context.configure_series_labels()
             .border_style(BLACK)
             .background_style(WHITE.mix(0.7))
@@ -776,43 +788,43 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.glog_messages_total + x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, GREEN)
+                                                .map(|x| (x.timestamp, (x.glog_messages_total + x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, CYAN)
         )
             .unwrap()
-            .label("glog messages write IOPS")
-            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
+            .label("glog messages write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], CYAN.filled()));
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLACK)
+                                                .map(|x| (x.timestamp, (x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLACK)
         )
             .unwrap()
-            .label("log append write IOPS")
+            .label("log cache read")
             .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, RED)
+                                                .map(|x| (x.timestamp, (x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count + x.log_append_latency_count))), 0.0, BLUE)
         )
             .unwrap()
-            .label("log cache read IOPS")
-            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
-        context.draw_series(AreaSeries::new(yugabyte_data
-                                                .iter()
-                                                .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLUE)
-        )
-            .unwrap()
-            .label("RocksDB write raw block IOPS")
+            .label("RocksDB sst read")
             .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.rocksdb_sst_read_micros_count))), 0.0, YELLOW)
+                                                .map(|x| (x.timestamp, (x.rocksdb_write_raw_block_micros_count + x.log_append_latency_count))), 0.0, RED)
         )
             .unwrap()
-            .label("RocksDB sst read IOPS")
-            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], YELLOW.filled()));
+            .label("RocksDB write raw block")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, x.log_append_latency_count)), 0.0, GREEN)
+        )
+            .unwrap()
+            .label("log append write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], GREEN.filled()));
         context.configure_series_labels()
             .border_style(BLACK)
             .background_style(WHITE.mix(0.7))
@@ -863,45 +875,11 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
         context.draw_series(LineSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, ((x.log_sync_latency_sum / x.log_sync_latency_count) / 1000.))), BLACK)
+                                                .map(|x| (x.timestamp, ((x.log_sync_latency_sum / x.log_sync_latency_count) / 1000.))), MAGENTA)
         )
             .unwrap()
             .label("WAL log sync latency")
-            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
-        /*
-    context.draw_series(AreaSeries::new(yugabyte_data
-                                            .iter()
-                                            .filter(|x| x.hostname == server)
-                                            .map(|x| (x.timestamp, (x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLACK)
-    )
-        .unwrap()
-        .label("log append write IOPS")
-        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
-    context.draw_series(AreaSeries::new(yugabyte_data
-                                            .iter()
-                                            .filter(|x| x.hostname == server)
-                                            .map(|x| (x.timestamp, (x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, RED)
-    )
-        .unwrap()
-        .label("log cache read IOPS")
-        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], RED.filled()));
-    context.draw_series(AreaSeries::new(yugabyte_data
-                                            .iter()
-                                            .filter(|x| x.hostname == server)
-                                            .map(|x| (x.timestamp, (x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, BLUE)
-    )
-        .unwrap()
-        .label("RocksDB write raw block IOPS")
-        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
-    context.draw_series(AreaSeries::new(yugabyte_data
-                                            .iter()
-                                            .filter(|x| x.hostname == server)
-                                            .map(|x| (x.timestamp, (x.rocksdb_sst_read_micros_count))), 0.0, YELLOW)
-    )
-        .unwrap()
-        .label("RocksDB sst read IOPS")
-        .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], YELLOW.filled()));
-     */
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], MAGENTA.filled()));
         context.configure_series_labels()
             .border_style(BLACK)
             .background_style(WHITE.mix(0.7))
