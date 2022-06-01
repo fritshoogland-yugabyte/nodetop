@@ -51,6 +51,8 @@ struct YBIOGraph {
     glog_messages_total: f64,
     log_bytes_logged: f64,
     log_reader_bytes_read: f64,
+    log_sync_latency_count: f64,
+    log_sync_latency_sum: f64,
     log_append_latency_count: f64,
     log_append_latency_sum: f64,
     log_cache_disk_reads: f64,
@@ -264,6 +266,8 @@ fn main() {
                     glog_messages_total: row.glog_messages_total_diff,
                     log_bytes_logged: row.log_bytes_logged_diff,
                     log_reader_bytes_read: row.log_reader_bytes_read_diff,
+                    log_sync_latency_count: row.log_sync_latency_count_diff,
+                    log_sync_latency_sum: row.log_sync_latency_sum_diff,
                     log_append_latency_count: row.log_append_latency_count_diff,
                     log_append_latency_sum: row.log_append_latency_sum_diff,
                     log_cache_disk_reads: row.log_cache_disk_reads_diff,
@@ -277,7 +281,7 @@ fn main() {
                 });
             }
             if yb {
-                println!("{:50} {:7.2} | {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} | {:7.0} {:7.0} {:7.0} | {:10.2} {:7.2} {:10.2} {:7.2}",
+                println!("{:50} {:7.2} | {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} | {:7.0} {:7.0} {:7.0} | {:10.2} {:7.2} {:10.2} {:7.2}",
                          hostname_port,
                          row.glog_messages_total_diff,
                          row.log_bytes_logged_diff / (1024. * 1024.),
@@ -289,6 +293,11 @@ fn main() {
                              (row.log_append_latency_sum_diff / row.log_append_latency_count_diff) / 1000.
                          },
                          row.log_cache_disk_reads_diff,
+                         if ((row.log_sync_latency_sum_diff / row.log_sync_latency_count_diff) / 1000.).is_nan() {
+                             0.
+                         } else {
+                             (row.log_sync_latency_sum_diff / row.log_sync_latency_count_diff) / 1000.
+                         },
                          row.rocksdb_flush_write_bytes_diff / (1024. * 1024.),
                          row.rocksdb_compact_read_bytes_diff / (1024. * 1024.),
                          row.rocksdb_compact_write_bytes_diff / (1024. * 1024.),
@@ -372,7 +381,7 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
         );
     };
     if yb {
-        println!("{:50} {:>7} | {:7} {:7} {:>7} {:>7} {:>7} | {:7} {:7} {:7} | {:>10} {:>7} {:>10} {:>7}",
+        println!("{:50} {:>7} | {:7} {:7} {:>7} {:>7} {:>7} {:>7} | {:7} {:7} {:7} | {:>10} {:>7} {:>10} {:>7}",
                  "hostname",
                  "msg WIO",
                  "log WMB",
@@ -380,6 +389,7 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
                  "log WIO",
                  "Wlat ms",
                  "log RIO",
+                 "lat syn",
                  "fls WMB",
                  "cmp RMB",
                  "cmp WMB",
@@ -667,6 +677,11 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
     } else {
         yugabyte_data.iter().map(|x| (x.rocksdb_write_raw_block_micros_sum / x.rocksdb_write_raw_block_micros_count) / 1000.).fold(0. / 0., f64::max)
     });
+    latency_vec.push( if yugabyte_data.iter().map(|x| (x.log_sync_latency_sum / x.log_sync_latency_count) / 1000.).fold(0. / 0., f64::max) == 0. {
+        1.
+    } else {
+        yugabyte_data.iter().map(|x| (x.log_sync_latency_sum / x.log_sync_latency_count) / 1000.).fold(0. / 0., f64::max)
+    });
     let high_value_latency: f64 = latency_vec.iter().cloned().fold(0. / 0., f64::max);
 
     let start_time = yugabyte_data.iter().map(|x| x.timestamp).min().unwrap();
@@ -845,6 +860,14 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>) {
             .unwrap()
             .label("RocksDB sst read latency")
             .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLUE.filled()));
+        context.draw_series(LineSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, ((x.log_sync_latency_sum / x.log_sync_latency_count) / 1000.))), BLACK)
+        )
+            .unwrap()
+            .label("WAL log sync latency")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], BLACK.filled()));
         /*
     context.draw_series(AreaSeries::new(yugabyte_data
                                             .iter()

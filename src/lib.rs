@@ -69,6 +69,8 @@ pub struct YugabyteIODetails {
     pub glog_messages_total: f64,
     pub log_bytes_logged: f64,
     pub log_reader_bytes_read: f64,
+    pub log_sync_latency_count: f64,
+    pub log_sync_latency_sum: f64,
     pub log_append_latency_count: f64,
     pub log_append_latency_sum: f64,
     pub log_cache_disk_reads: f64,
@@ -90,6 +92,10 @@ pub struct YBIOPresentation {
     pub log_bytes_logged_counter: f64,
     pub log_reader_bytes_read_diff: f64,
     pub log_reader_bytes_read_counter: f64,
+    pub log_sync_latency_count_diff: f64,
+    pub log_sync_latency_count_counter: f64,
+    pub log_sync_latency_sum_diff: f64,
+    pub log_sync_latency_sum_counter: f64,
     pub log_append_latency_count_diff: f64,
     pub log_append_latency_count_counter: f64,
     pub log_append_latency_sum_diff: f64,
@@ -376,6 +382,35 @@ fn parse_node_exporter(node_exporter_data: String) -> Vec<NodeExporterValues> {
                 node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_cache_disk_reads").map(|x| x.node_exporter_timestamp).min().unwrap(),
             });
         };
+        // log_sync_latency_(count|sum)
+        // both counters,
+        // count = number of calls to Log::Sync() in log.cc NOT number of calls to fsync() !!
+        // sum = total time spent in Log::Sync(), SOMETIMES with fsync() happening !!
+        // https://github.com/yugabyte/yugabyte-db/issues/11039
+        if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_sync_latency_count").count() > 0 {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_sync_latency_count") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_sync_latency_count".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_sync_latency_count").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_sync_latency_count").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "log_sync_latency_sum") {
+                record.node_exporter_category = "detail".to_string();
+            }
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "log_sync_latency_sum".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_sync_latency_sum").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "log_sync_latency_sum").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+        }
         // log_append_latency_(count|sum)
         // both counters,
         // count = number of log append (write: writev()) occasions. (IOPS)
@@ -762,6 +797,8 @@ pub fn yugabyte_details(
                 glog_messages_total: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "glog_messages_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_bytes_logged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_reader_bytes_read: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_reader_bytes_read" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_sync_latency_count: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_sync_latency_count" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                log_sync_latency_sum: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_sync_latency_sum" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_append_latency_count: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_append_latency_count" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_append_latency_sum: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_append_latency_sum" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_cache_disk_reads: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_cache_disk_reads" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
@@ -834,6 +871,10 @@ pub fn diff_yugabyte_details(
                     log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
                     log_reader_bytes_read_diff: (yugabyte_details.log_reader_bytes_read - row.log_reader_bytes_read_counter)/time_difference,
                     log_reader_bytes_read_counter: yugabyte_details.log_reader_bytes_read,
+                    log_sync_latency_count_diff: (yugabyte_details.log_sync_latency_count - row.log_sync_latency_count_counter)/time_difference,
+                    log_sync_latency_count_counter: yugabyte_details.log_sync_latency_count,
+                    log_sync_latency_sum_diff: (yugabyte_details.log_sync_latency_sum - row.log_sync_latency_sum_counter)/time_difference,
+                    log_sync_latency_sum_counter: yugabyte_details.log_sync_latency_sum,
                     log_append_latency_count_diff: (yugabyte_details.log_append_latency_count - row.log_append_latency_count_counter)/time_difference,
                     log_append_latency_count_counter: yugabyte_details.log_append_latency_count,
                     log_append_latency_sum_diff: (yugabyte_details.log_append_latency_sum - row.log_append_latency_sum_counter)/time_difference,
@@ -865,6 +906,10 @@ pub fn diff_yugabyte_details(
                     log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
                     log_reader_bytes_read_diff: 0.0,
                     log_reader_bytes_read_counter: yugabyte_details.log_reader_bytes_read,
+                    log_sync_latency_count_diff: 0.0,
+                    log_sync_latency_count_counter: yugabyte_details.log_sync_latency_count,
+                    log_sync_latency_sum_diff: 0.0,
+                    log_sync_latency_sum_counter: yugabyte_details.log_sync_latency_sum,
                     log_append_latency_count_diff: 0.,
                     log_append_latency_count_counter: yugabyte_details.log_append_latency_count,
                     log_append_latency_sum_diff: 0.,
