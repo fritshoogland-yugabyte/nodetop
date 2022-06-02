@@ -66,7 +66,8 @@ pub struct DiskHost {
 pub struct YugabyteIODetails {
     pub hostname_port: String,
     pub timestamp: DateTime<Utc>,
-    pub glog_messages_total: f64,
+    pub glog_messages_info: f64,
+    pub glog_messages_prio: f64,
     pub log_bytes_logged: f64,
     pub log_reader_bytes_read: f64,
     pub log_sync_latency_count: f64,
@@ -86,8 +87,10 @@ pub struct YugabyteIODetails {
 #[derive(Debug)]
 pub struct YBIOPresentation {
     pub timestamp: DateTime<Utc>,
-    pub glog_messages_total_diff: f64,
-    pub glog_messages_total_counter: f64,
+    pub glog_messages_info_diff: f64,
+    pub glog_messages_info_counter: f64,
+    pub glog_messages_prio_diff: f64,
+    pub glog_messages_prio_counter: f64,
     pub log_bytes_logged_diff: f64,
     pub log_bytes_logged_counter: f64,
     pub log_reader_bytes_read_diff: f64,
@@ -322,16 +325,24 @@ fn parse_node_exporter(node_exporter_data: String) -> Vec<NodeExporterValues> {
         // counter, in written messages (write()) (IOPS).
         // this is the number of logging messages written as part of the logging framework, done via synchronous write() call.
         if nodeexportervalues.iter().filter(|r| r.node_exporter_name == "glog_info_messages").count() > 0 {
-            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name.starts_with("glog_") ) {
+            for record in nodeexportervalues.iter_mut().filter(|r| r.node_exporter_name == "glog_info_messages" ) {
                 record.node_exporter_category = "detail".to_string();
             }
             nodeexportervalues.push( NodeExporterValues {
-                node_exporter_name: "glog_messages_total".to_string(),
+                node_exporter_name: "glog_messages_info".to_string(),
                 node_exporter_type: "counter".to_string(),
                 node_exporter_labels: "".to_string(),
                 node_exporter_category: "summary".to_string(),
-                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name.starts_with("glog_")).map(|x| x.node_exporter_value).sum(),
-                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name.starts_with("glog_")).map(|x| x.node_exporter_timestamp).min().unwrap(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "glog_info_messages").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "glog_info_messages").map(|x| x.node_exporter_timestamp).min().unwrap(),
+            });
+            nodeexportervalues.push( NodeExporterValues {
+                node_exporter_name: "glog_messages_prio".to_string(),
+                node_exporter_type: "counter".to_string(),
+                node_exporter_labels: "".to_string(),
+                node_exporter_category: "summary".to_string(),
+                node_exporter_value: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "glog_warning_messages" || r.node_exporter_name == "glog_error_messages").map(|x| x.node_exporter_value).sum(),
+                node_exporter_timestamp: nodeexportervalues.iter().filter(|r| r.node_exporter_name == "glog_warning_messages" || r.node_exporter_name == "glog_error_messages").map(|x| x.node_exporter_timestamp).min().unwrap(),
             });
         };
         // log_bytes_logged
@@ -794,7 +805,8 @@ pub fn yugabyte_details(
             details.push(YugabyteIODetails {
                 hostname_port: hostname_port.to_string(),
                 timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
-                glog_messages_total: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "glog_messages_total" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                glog_messages_info: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "glog_messages_info" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                glog_messages_prio: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "glog_messages_prio" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_bytes_logged: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_bytes_logged" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_reader_bytes_read: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_reader_bytes_read" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
                 log_sync_latency_count: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "log_sync_latency_count" && r.node_exporter_category == "summary").map(|x| x.node_exporter_value).nth(0).unwrap(),
@@ -865,8 +877,10 @@ pub fn diff_yugabyte_details(
                let time_difference = yugabyte_details.timestamp.signed_duration_since(row.timestamp).num_milliseconds() as f64 / 1000.;
                 *row = YBIOPresentation {
                     timestamp: yugabyte_details.timestamp,
-                    glog_messages_total_diff: (yugabyte_details.glog_messages_total - row.glog_messages_total_counter)/time_difference,
-                    glog_messages_total_counter: yugabyte_details.glog_messages_total,
+                    glog_messages_info_diff: (yugabyte_details.glog_messages_info - row.glog_messages_info_counter)/time_difference,
+                    glog_messages_info_counter: yugabyte_details.glog_messages_info,
+                    glog_messages_prio_diff: (yugabyte_details.glog_messages_prio - row.glog_messages_prio_counter)/time_difference,
+                    glog_messages_prio_counter: yugabyte_details.glog_messages_prio,
                     log_bytes_logged_diff: (yugabyte_details.log_bytes_logged - row.log_bytes_logged_counter)/time_difference,
                     log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
                     log_reader_bytes_read_diff: (yugabyte_details.log_reader_bytes_read - row.log_reader_bytes_read_counter)/time_difference,
@@ -900,8 +914,9 @@ pub fn diff_yugabyte_details(
             None => {
                 yugabyte_presentation.insert( yugabyte_details.hostname_port, YBIOPresentation {
                     timestamp: yugabyte_details.timestamp,
-                    glog_messages_total_diff: 0.,
-                    glog_messages_total_counter: yugabyte_details.glog_messages_total,
+                    glog_messages_info_diff: 0.,
+                    glog_messages_info_counter: yugabyte_details.glog_messages_info,
+                    glog_messages_prio_diff: 0.,
                     log_bytes_logged_diff: 0.,
                     log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
                     log_reader_bytes_read_diff: 0.0,

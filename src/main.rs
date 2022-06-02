@@ -48,7 +48,8 @@ struct DiskGraph {
 struct YBIOGraph {
     hostname: String,
     timestamp: DateTime<Utc>,
-    glog_messages_total: f64,
+    glog_messages_info: f64,
+    glog_messages_prio: f64,
     log_bytes_logged: f64,
     log_reader_bytes_read: f64,
     log_sync_latency_count: f64,
@@ -272,7 +273,8 @@ fn main() {
                 yugabyte_history.push(YBIOGraph {
                     hostname: hostname_port.to_string(),
                     timestamp: row.timestamp,
-                    glog_messages_total: row.glog_messages_total_diff,
+                    glog_messages_info: row.glog_messages_info_diff,
+                    glog_messages_prio: row.glog_messages_prio_diff,
                     log_bytes_logged: row.log_bytes_logged_diff,
                     log_reader_bytes_read: row.log_reader_bytes_read_diff,
                     log_sync_latency_count: row.log_sync_latency_count_diff,
@@ -290,9 +292,10 @@ fn main() {
                 });
             }
             if yb {
-                println!("{:50} {:7.2} | {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} | {:7.0} {:7.0} {:7.0} | {:10.2} {:7.2} {:10.2} {:7.2}",
+                println!("{:50} {:7.2} {:7.2} | {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} | {:7.0} {:7.0} {:7.0} | {:10.2} {:7.2} {:10.2} {:7.2}",
                          hostname_port,
-                         row.glog_messages_total_diff,
+                         row.glog_messages_info_diff,
+                         row.glog_messages_prio_diff,
                          row.log_bytes_logged_diff / (1024. * 1024.),
                          row.log_reader_bytes_read_diff / (1024. * 1024.),
                          row.log_append_latency_count_diff,
@@ -390,9 +393,10 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
         );
     };
     if yb {
-        println!("{:50} {:>7} | {:7} {:7} {:>7} {:>7} {:>7} {:>7} | {:7} {:7} {:7} | {:>10} {:>7} {:>10} {:>7}",
+        println!("{:50} {:>7} {:>7} | {:7} {:7} {:>7} {:>7} {:>7} {:>7} | {:7} {:7} {:7} | {:>10} {:>7} {:>10} {:>7}",
                  "hostname",
-                 "msg WIO",
+                 "msgWinf",
+                 "msgWpri",
                  "log WMB",
                  "log RMB",
                  "log WIO",
@@ -666,10 +670,10 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>, graph_name_addition: Str
         yugabyte_data.iter().map(|x| (x.log_reader_bytes_read + x.log_bytes_logged + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max)
     };
     let low_value_iops: f64 = 0.;
-    let high_value_iops: f64 = if yugabyte_data.iter().map(|x| (x.glog_messages_total + x.log_cache_disk_reads + x.log_append_latency_count + x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count)).fold(0. / 0., f64::max) == 0. {
+    let high_value_iops: f64 = if yugabyte_data.iter().map(|x| (x.glog_messages_info + x.glog_messages_prio + x.log_cache_disk_reads + x.log_append_latency_count + x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count)).fold(0. / 0., f64::max) == 0. {
         1.
     } else {
-        yugabyte_data.iter().map(|x| (x.glog_messages_total + x.log_cache_disk_reads + x.log_append_latency_count + x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count)).fold(0. / 0., f64::max)
+        yugabyte_data.iter().map(|x| (x.glog_messages_info + x.glog_messages_prio + x.log_cache_disk_reads + x.log_append_latency_count + x.rocksdb_sst_read_micros_count + x.rocksdb_write_raw_block_micros_count)).fold(0. / 0., f64::max)
     };
     let low_value_latency: f64 = 0.;
     let mut latency_vec = Vec::new();
@@ -788,10 +792,18 @@ fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>, graph_name_addition: Str
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
                                                 .filter(|x| x.hostname == server)
-                                                .map(|x| (x.timestamp, (x.glog_messages_total + x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, CYAN)
+                                                .map(|x| (x.timestamp, (x.glog_messages_info + x.glog_messages_prio + x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, Palette99::pick(2))
         )
             .unwrap()
-            .label("glog messages write")
+            .label("glog messages info write")
+            .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], Palette99::pick(2).filled()));
+        context.draw_series(AreaSeries::new(yugabyte_data
+                                                .iter()
+                                                .filter(|x| x.hostname == server)
+                                                .map(|x| (x.timestamp, (x.glog_messages_prio + x.log_append_latency_count + x.log_cache_disk_reads + x.rocksdb_write_raw_block_micros_count + x.rocksdb_sst_read_micros_count))), 0.0, CYAN)
+        )
+            .unwrap()
+            .label("glog messages prio write")
             .legend(|(x, y)| Rectangle::new([(x - 3, y - 3), (x + 3, y + 3)], CYAN.filled()));
         context.draw_series(AreaSeries::new(yugabyte_data
                                                 .iter()
