@@ -917,6 +917,7 @@ pub fn diff_yugabyte_details(
                     glog_messages_info_diff: 0.,
                     glog_messages_info_counter: yugabyte_details.glog_messages_info,
                     glog_messages_prio_diff: 0.,
+                    glog_messages_prio_counter: yugabyte_details.glog_messages_prio,
                     log_bytes_logged_diff: 0.,
                     log_bytes_logged_counter: yugabyte_details.log_bytes_logged,
                     log_reader_bytes_read_diff: 0.0,
