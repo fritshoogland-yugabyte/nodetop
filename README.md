@@ -10,6 +10,8 @@ The current data that nodetop measures is:
 Nodetop, when executed, will print out the statistics at a 5 seconds interval for all nodes involved to the screen. 
 If the switch `--graph` is set, it will create PNG files for CPU, disk and YugabyteIO in the current working directory.
 
+Nodetop performs the exact same purpose as common linux utilities such as sar, iostat and dstat, but doing it for multiple machines.
+
 See `--help` for all the options.
 
 # output

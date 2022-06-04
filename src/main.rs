@@ -417,6 +417,8 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
 fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>, graph_name_addition: String) {
     let cpu_data = data.lock().unwrap();
 
+    if cpu_data.iter().count() == 0 { return };
+
     let start_time = cpu_data.iter().map(|x| x.timestamp).min().unwrap();
     let end_time = cpu_data.iter().map(|x| x.timestamp).max().unwrap();
     let low_value: f64 = 0.0;
@@ -471,6 +473,8 @@ fn draw_cpu(data: &Arc<Mutex<Vec<CpuGraph>>>, graph_name_addition: String) {
 
 fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>, graph_name_addition: String) {
     let disk_data = data.lock().unwrap();
+
+    if disk_data.iter().count() == 0 { return };
 
     let start_time = disk_data.iter().map(|x| x.timestamp).min().unwrap();
     let end_time = disk_data.iter().map(|x| x.timestamp).max().unwrap();
@@ -663,6 +667,9 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>, graph_name_addition: String) {
 
 fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>, graph_name_addition: String) {
     let yugabyte_data = yugabyte.lock().unwrap();
+
+    if yugabyte_data.iter().count() == 0 { return };
+
     let low_value_mbps: f64 = 0.;
     let high_value_mbps: f64 = if yugabyte_data.iter().map(|x| (x.log_reader_bytes_read + x.log_bytes_logged + x.rocksdb_flush_write_bytes + x.rocksdb_compact_read_bytes + x.rocksdb_compact_write_bytes) / (1024. * 1024.)).fold(0. / 0., f64::max) == 0. {
         1.
