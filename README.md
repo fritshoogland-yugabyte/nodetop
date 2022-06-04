@@ -107,7 +107,16 @@ Description of the fields:
 | Wlat ms   | rocksdb write latency in milliseconds: rocksdb average write latency in milliseconds. (rocksdb_sst_read_micros_sum/rocksdb_sst_read_micros_count)             |
 
 ## graph
-When the flag `--graph` is specified, nodetop writes a graphics over the total timespan of running of the measurements of cpu, disk and yugabyte statistics in diagrams, this is regardless of the specification of cpu, disk or yugabyte.
+When the flag `--graph` is specified, nodetop writes a graphics over the total timespan of running of the measurements of cpu, disk and yugabyte statistics in diagrams, this is regardless of the specification of cpu, disk or yugabyte.  
+
+This is an example of a CPU graph:
+![CPU](image/cpu_graph.jpg)
+
+This is an example of a disk graph:
+![disk](image/disk_graph.jpg)
+
+This is an example of a YugabyteDB graph:
+![yugabyte](image/yugabyte_graph.jpg)
 
 When testing and thus repeated invocation of nodetop, you can use the `--graph-addition` flag to add something to the name of the graphs, so you can generate different graphics that are not overwritten.
 
