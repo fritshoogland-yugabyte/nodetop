@@ -121,25 +121,3 @@ This is an example of a YugabyteDB graph:
 ![yugabyte](image/yugabyte_graph.jpg)
 
 When testing and thus repeated invocation of nodetop, you can use the `--graph-addition` flag to add something to the name of the graphs, so you can generate different graphics that are not overwritten.
-
-# install
-
-In order to install nodetop, perform the following tasks:
-1. Install rust: https://www.rust-lang.org/tools/install
-2. Clone this repository
-3. `cd nodetop`
-4. Build the nodetop utility: `cargo build --release`
-
-The nodetop utility will be in the `target/release` directory.
-
-Note: install on centos: when installing on centos, the following packages should be installed prior to building nodetop:
-- cmake
-- gcc-c++
-- freetype-devel
-- expat-devel
-- open-sans-fonts
-- fontconfig
-- openssl-devel  
-  
-Yum command for quick install:  
-`yum install -y cmake gcc-c++ freetype-devel expat-devel open-sans-fonts fontconfig openssl-devel`
