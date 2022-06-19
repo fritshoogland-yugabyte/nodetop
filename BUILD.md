@@ -1,6 +1,7 @@
 # build from source
 In order to build nodetop from source using the rust compiler, the following RPMs need to be installed:
 (validated with Centos 7 and Alma 8)
+- git
 - cmake
 - gcc-c++
 - freetype-devel
@@ -9,11 +10,22 @@ In order to build nodetop from source using the rust compiler, the following RPM
 - fontconfig-devel
 - openssl-devel  
 
-Yum command for quick install:  
-`yum install -y cmake gcc-c++ freetype-devel expat-devel open-sans-fonts fontconfig-devel openssl-devel`
+Yum command for quick install of rpm packages:  
+`yum install -y git cmake gcc-c++ freetype-devel expat-devel open-sans-fonts fontconfig-devel openssl-devel`
 
-Git clone nodetop.
+Install rust:
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+Clone this repository:
+```
+git clone https://github.com/fritshoogland-yugabyte/nodetop.git
+```
+Build nodetop in release mode:
+```
+cd nodetop
 cargo build --release
+```
 The executable is in target/release.
 
 # generate rpm
@@ -25,10 +37,7 @@ cargo install cargo-generate-rpm
 ```
 
 Steps to build an RPM:
-1. Build an executable:
-```
-cargo build --release
-```
+1. Build a release executable (see instructions above)
 2. Strip debug symbols:
 ```
 strip -s target/release/nodetop
