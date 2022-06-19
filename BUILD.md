@@ -1,17 +1,22 @@
 # build from source
-In order to build nodetop from source using the rust compiler, the following RPMs need to be installed on Centos 7:
+In order to build nodetop from source using the rust compiler, the following RPMs need to be installed:
+(validated with Centos 7 and Alma 8)
 - cmake
 - gcc-c++
 - freetype-devel
 - expat-devel
 - open-sans-fonts
-- fontconfig
+- fontconfig-devel
 - openssl-devel  
 
 Yum command for quick install:  
-`yum install -y cmake gcc-c++ freetype-devel expat-devel open-sans-fonts fontconfig openssl-devel`
+`yum install -y cmake gcc-c++ freetype-devel expat-devel open-sans-fonts fontconfig-devel openssl-devel`
 
-# generate rpm on centos 7
+Git clone nodetop.
+cargo build --release
+The executable is in target/release.
+
+# generate rpm
 In order to create an RPM file on Centos 7, when a rust environment with Cargo is installed:
 
 Add cargo-generate-rpm:
@@ -28,9 +33,15 @@ cargo build --release
 ```
 strip -s target/release/nodetop
 ```
-3. Generate RPM
+3. Generate RPM  
+Centos 7
 ```
-cargo generate-rpm
+cargo generate-rpm --auto-req auto --payload-compress gzip
+```
+Alma 8
+The release flag must be set to reflect EL8 in Cargo.toml.
+```
+cargo generate-rpm --auto-req auto
 ```
 
 The RPM will be available in the `target/generate-rpm` directory.

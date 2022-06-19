@@ -121,3 +121,6 @@ This is an example of a YugabyteDB graph:
 ![yugabyte](image/yugabyte_graph.jpg)
 
 When testing and thus repeated invocation of nodetop, you can use the `--graph-addition` flag to add something to the name of the graphs, so you can generate different graphics that are not overwritten.
+
+# install
+The simplest way to install `nodetop` is to use an RPM release: https://github.com/fritshoogland-yugabyte/nodetop/releases
