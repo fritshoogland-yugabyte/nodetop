@@ -1,7 +1,9 @@
 [package]
 name = "nodetop"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
+license = "apache-2.0"
+description = "A utility to obtain statistics from node_exporter and YugabyteDB in prometheus format in order to visualize them on the CLI and/or in a graph"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,3 +18,13 @@ ctrlc = "3.2.2"
 plotters = "0.3.1"
 cmake = "=0.1.45"
 itertools = "0.10.3"
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/nodetop", dest = "/usr/local/bin/nodetop", mode="0755" }
+]
+release = "1.el7"
+
+[package.metadata.generate-rpm.requires]
+open-sans-fonts = ">= 1.10"
+fontconfig = ">= 2.13"
