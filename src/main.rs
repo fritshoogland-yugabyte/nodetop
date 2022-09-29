@@ -10,7 +10,7 @@ use plotters::prelude::*;
 use itertools::Itertools;
 use plotters::chart::SeriesLabelPosition::UpperLeft;
 
-use nodetop::{read_node_exporter_into_map, cpu_details, diff_cpu_details, disk_details, CpuPresentation, DiskPresentation, diff_disk_details, YBIOPresentation, yugabyte_details, diff_yugabyte_details};
+use nodetop::{read_node_exporter_into_map, cpu_details, diff_cpu_details, disk_details, CpuPresentation, DiskPresentation, diff_disk_details, YBIOPresentation, yugabyte_io_details, diff_yugabyte_io_details, yugabyte_mem_details, diff_yugabyte_mem_details, YBMemPresentation};
 
 #[derive(Debug)]
 struct CpuGraph {
@@ -66,9 +66,24 @@ struct YBIOGraph {
     rocksdb_sst_read_micros_sum: f64,
 }
 
+#[derive(Debug)]
+struct YBMemGraph {
+    hostname: String,
+    timestamp: DateTime<Utc>,
+    generic_heap_size: f64,
+    generic_current_allocated_bytes: f64,
+    tcmalloc_pageheap_free_bytes: f64,
+    tcmalloc_current_total_thread_cache_bytes: f64,
+    tcmalloc_pageheap_unmapped_bytes: f64,
+    tcmalloc_max_total_thread_cache_bytes: f64,
+    mem_tracker_server: f64,
+    mem_tracker_blockbasedtable_server: f64,
+    mem_tracker_tablets_server: f64,
+}
+
 const DEFAULT_HOSTNAMES: &str = "192.168.66.80";
-const DEFAULT_PORTS: &str = "9300";
-const INTERVAL: &str = "5";
+const DEFAULT_PORTS: &str = "9000,9300";
+const INTERVAL: &str = "1";
 
 #[derive(Debug, StructOpt)]
 struct Opts {
@@ -84,9 +99,12 @@ struct Opts {
     /// disk statistics
     #[structopt(short, long)]
     disk: bool,
-    /// yugabyte statistics
+    /// yugabyte io statistics
     #[structopt(short, long)]
-    yb: bool,
+    ybio: bool,
+    /// yugabyte memory statistics
+    #[structopt(long)]
+    ybmem: bool,
     /// interval in seconds
     #[structopt(short, long, default_value = INTERVAL)]
     interval: u64,
@@ -109,7 +127,8 @@ fn main() {
     let ports = &ports_string.split(",").collect();
     let cpu = options.cpu as bool;
     let disk = options.disk as bool;
-    let yb = options.yb as bool;
+    let ybio = options.ybio as bool;
+    let ybmem = options.ybmem as bool;
     let interval = options.interval as u64;
     let lines_for_header = options.lines_for_header as u64;
     let graph = options.graph as bool;
@@ -118,45 +137,51 @@ fn main() {
         Some(addition) => format!("_{}", addition),
         None => "".to_string(),
     };
-    //let graph_name_addition = graph_name_addition_string.as_str();
 
-    if !cpu && !disk && !yb {
+    if !cpu && !disk && !ybio && !ybmem {
         Opts::clap().print_help().unwrap();
         process::exit(0);
     }
     let mut host_presentation: BTreeMap<String, CpuPresentation> = BTreeMap::new();
     let mut disk_presentation: BTreeMap<String, DiskPresentation> = BTreeMap::new();
-    let mut yugabyte_presentation: BTreeMap<String, YBIOPresentation> = BTreeMap::new();
+    let mut yugabyte_io_presentation: BTreeMap<String, YBIOPresentation> = BTreeMap::new();
+    let mut yugabyte_mem_presentation: BTreeMap<String, YBMemPresentation> = BTreeMap::new();
     let mut row_counter = 0;
     let cpu_history: Vec<CpuGraph> = Vec::new();
     let cpu_history_ref: Arc<Mutex<Vec<CpuGraph>>> = Arc::new(Mutex::new(cpu_history));
     let disk_history: Vec<DiskGraph> = Vec::new();
     let disk_history_ref: Arc<Mutex<Vec<DiskGraph>>> = Arc::new(Mutex::new(disk_history));
-    let yugabyte_history: Vec<YBIOGraph> = Vec::new();
-    let yugabyte_history_ref: Arc<Mutex<Vec<YBIOGraph>>> = Arc::new(Mutex::new(yugabyte_history));
+    let yugabyte_io_history: Vec<YBIOGraph> = Vec::new();
+    let yugabyte_io_history_ref: Arc<Mutex<Vec<YBIOGraph>>> = Arc::new(Mutex::new(yugabyte_io_history));
+    let yugabyte_mem_history: Vec<YBMemGraph> = Vec::new();
+    let yugabyte_mem_history_ref: Arc<Mutex<Vec<YBMemGraph>>> = Arc::new(Mutex::new(yugabyte_mem_history));
 
     let cpu_history_ctrlc_clone = cpu_history_ref.clone();
     let disk_history_ctrlc_clone = disk_history_ref.clone();
-    let yugabyte_history_ctrlc_clone = yugabyte_history_ref.clone();
+    let yugabyte_io_history_ctrlc_clone = yugabyte_io_history_ref.clone();
+    let yugabyte_mem_history_ctrlc_clone = yugabyte_mem_history_ref.clone();
 
     ctrlc::set_handler(move || {
         if graph {
             draw_cpu(&cpu_history_ctrlc_clone, graph_name_addition.clone());
             draw_disk(&disk_history_ctrlc_clone, graph_name_addition.clone());
-            draw_yugabyte(&yugabyte_history_ctrlc_clone, graph_name_addition.clone());
+            draw_yugabyte_io(&yugabyte_io_history_ctrlc_clone, graph_name_addition.clone());
+            //draw_yugabyte_mem(&yugabyte_mem_history_ctrlc_clone, graph_name_addition.clone());
         }
         process::exit(0);
     }).unwrap();
 
     let cpu_history_loop_clone = cpu_history_ref.clone();
     let disk_history_loop_clone = disk_history_ref.clone();
-    let yugabyte_history_loop_clone = yugabyte_history_ref.clone();
+    let yugabyte_io_history_loop_clone = yugabyte_io_history_ref.clone();
+    let yugabyte_mem_history_loop_clone = yugabyte_mem_history_ref.clone();
 
     let mut disk_first_capture = true;
     let mut ybio_first_capture = true;
+    let mut ybmem_first_capture = true;
     loop {
         if row_counter == 0 && lines_for_header != 0 {
-            print_header(cpu, disk, yb);
+            print_header(cpu, disk, ybio, ybmem);
         }
         let start_time = time::Instant::now();
         let node_values = read_node_exporter_into_map(hosts, ports, 1);
@@ -263,14 +288,14 @@ fn main() {
                 row_counter += 1;
             }
         }
-        let yugabyte_details = yugabyte_details(&node_values);
-        diff_yugabyte_details(yugabyte_details, &mut yugabyte_presentation);
-        for (hostname_port, row) in &yugabyte_presentation {
+        let yugabyte_io_details = yugabyte_io_details(&node_values);
+        diff_yugabyte_io_details(yugabyte_io_details, &mut yugabyte_io_presentation);
+        for (hostname_port, row) in &yugabyte_io_presentation {
             if ybio_first_capture && graph {
                 ybio_first_capture = false;
             } else {
-                let mut yugabyte_history = yugabyte_history_loop_clone.lock().unwrap();
-                yugabyte_history.push(YBIOGraph {
+                let mut yugabyte_io_history = yugabyte_io_history_loop_clone.lock().unwrap();
+                yugabyte_io_history.push(YBIOGraph {
                     hostname: hostname_port.to_string(),
                     timestamp: row.timestamp,
                     glog_messages_info: row.glog_messages_info_diff,
@@ -291,7 +316,7 @@ fn main() {
                     rocksdb_sst_read_micros_sum: row.rocksdb_sst_read_micros_sum_diff,
                 });
             }
-            if yb {
+            if ybio {
                 println!("{:50} {:7.2} {:7.2} | {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} {:7.2} | {:7.0} {:7.0} {:7.0} | {:10.2} {:7.2} {:10.2} {:7.2}",
                          hostname_port,
                          row.glog_messages_info_diff,
@@ -329,6 +354,43 @@ fn main() {
                 row_counter += 1;
             }
         }
+        let yugabyte_mem_details = yugabyte_mem_details(&node_values);
+        diff_yugabyte_mem_details(yugabyte_mem_details, &mut yugabyte_mem_presentation);
+        for (hostname_port, row) in &yugabyte_mem_presentation {
+            if ybmem_first_capture && graph {
+                ybmem_first_capture = false;
+            } else {
+                let mut yugabyte_mem_history = yugabyte_mem_history_loop_clone.lock().unwrap();
+                yugabyte_mem_history.push(YBMemGraph {
+                    hostname: hostname_port.to_string(),
+                    timestamp: row.timestamp,
+                    generic_heap_size: row.generic_heap_size,
+                    generic_current_allocated_bytes: row.generic_current_allocated_bytes,
+                    tcmalloc_pageheap_free_bytes: row.tcmalloc_pageheap_free_bytes,
+                    tcmalloc_current_total_thread_cache_bytes: row.tcmalloc_current_total_thread_cache_bytes,
+                    tcmalloc_pageheap_unmapped_bytes: row.tcmalloc_pageheap_unmapped_bytes,
+                    tcmalloc_max_total_thread_cache_bytes: row.tcmalloc_max_total_thread_cache_bytes,
+                    mem_tracker_server: row.mem_tracker_server,
+                    mem_tracker_blockbasedtable_server: row.mem_tracker_blockbasedtable_server,
+                    mem_tracker_tablets_server: row.mem_tracker_tablets_server,
+                });
+            }
+            if ybmem {
+                println!("{:50} {:>10.0} {:>10.0} {:>10.0} {:>10.0} {:>10.0} {:>10.0} {:>10.0} {:>10.0} {:>10.0}",
+                    hostname_port,
+                    row.generic_heap_size/1024./1024.,
+                    row.generic_current_allocated_bytes/1024./1024.,
+                    row.tcmalloc_pageheap_free_bytes/1024./1024.,
+                    row.tcmalloc_current_total_thread_cache_bytes/1024./1024.,
+                    row.tcmalloc_pageheap_unmapped_bytes/1024./1024.,
+                    row.tcmalloc_max_total_thread_cache_bytes/1024./1024.,
+                    row.mem_tracker_server/1024./1024.,
+                    row.mem_tracker_blockbasedtable_server/1024./1024.,
+                    row.mem_tracker_tablets_server/1024./1024.,
+                );
+                row_counter += 1;
+            }
+        }
 
         if row_counter > lines_for_header {
             row_counter = 0;
@@ -339,7 +401,7 @@ fn main() {
     }
 }
 
-fn print_header(cpu: bool, disk: bool, yb: bool) {
+fn print_header(cpu: bool, disk: bool, ybio: bool, ybmem: bool) {
     if cpu {
         println!("{:30} {:>5} {:>5} | {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} | {:>7} {:>7} | {:>7} {:>7} | {:>7} {:>7} | {:>6} {:>6} {:>6}",
                  "hostname",
@@ -392,7 +454,7 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
                  "MBPS",
         );
     };
-    if yb {
+    if ybio {
         println!("{:50} {:>7} {:>7} | {:7} {:7} {:>7} {:>7} {:>7} {:>7} | {:7} {:7} {:7} | {:>10} {:>7} {:>10} {:>7}",
                  "hostname",
                  "msgWinf",
@@ -410,6 +472,20 @@ fn print_header(cpu: bool, disk: bool, yb: bool) {
                  "Rlat ms",
                  "rdb WIO",
                  "Wlat ms",
+        );
+    };
+    if ybmem {
+        println!("{:50} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+            "hostname",
+            "gen heap",
+            "gen cur",
+            "tc free",
+            "tc curtot",
+            "tc unmap",
+            "tc maxtot",
+            "mt",
+            "mt bbt",
+            "mt tablets",
         );
     };
 }
@@ -665,7 +741,7 @@ fn draw_disk(data: &Arc<Mutex<Vec<DiskGraph>>>, graph_name_addition: String) {
     }
 }
 
-fn draw_yugabyte(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>, graph_name_addition: String) {
+fn draw_yugabyte_io(yugabyte: &Arc<Mutex<Vec<YBIOGraph>>>, graph_name_addition: String) {
     let yugabyte_data = yugabyte.lock().unwrap();
 
     if yugabyte_data.iter().count() == 0 { return };

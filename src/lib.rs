@@ -85,6 +85,35 @@ pub struct YugabyteIODetails {
 }
 
 #[derive(Debug)]
+pub struct YugabyteMemDetails {
+    pub hostname_port: String,
+    pub timestamp: DateTime<Utc>,
+    pub generic_heap_size: f64,
+    pub generic_current_allocated_bytes: f64,
+    pub tcmalloc_pageheap_free_bytes: f64,
+    pub tcmalloc_current_total_thread_cache_bytes: f64,
+    pub tcmalloc_pageheap_unmapped_bytes: f64,
+    pub tcmalloc_max_total_thread_cache_bytes: f64,
+    pub mem_tracker_server: f64,
+    pub mem_tracker_blockbasedtable_server: f64,
+    pub mem_tracker_tablets_server: f64,
+}
+
+#[derive(Debug)]
+pub struct YBMemPresentation {
+    pub timestamp: DateTime<Utc>,
+    pub generic_heap_size: f64,
+    pub generic_current_allocated_bytes: f64,
+    pub tcmalloc_pageheap_free_bytes: f64,
+    pub tcmalloc_current_total_thread_cache_bytes: f64,
+    pub tcmalloc_pageheap_unmapped_bytes: f64,
+    pub tcmalloc_max_total_thread_cache_bytes: f64,
+    pub mem_tracker_server: f64,
+    pub mem_tracker_blockbasedtable_server: f64,
+    pub mem_tracker_tablets_server: f64,
+}
+
+#[derive(Debug)]
 pub struct YBIOPresentation {
     pub timestamp: DateTime<Utc>,
     pub glog_messages_info_diff: f64,
@@ -762,8 +791,7 @@ pub fn add_to_node_exporter_vectors(
 
 pub fn cpu_details(
     values: &HashMap<String, Vec<NodeExporterValues>>
-) -> Vec<CpuDetails>
-{
+) -> Vec<CpuDetails> {
     let mut details: Vec<CpuDetails> = Vec::new();
     for (hostname_port, node_exporter_vector) in values {
         if node_exporter_vector.iter().filter(|r| r.node_exporter_name == "node_load1").count() > 0 {
@@ -795,7 +823,31 @@ pub fn cpu_details(
     details
 }
 
-pub fn yugabyte_details(
+pub fn yugabyte_mem_details(
+    values: &HashMap<String, Vec<NodeExporterValues>>
+) -> Vec<YugabyteMemDetails> {
+    let mut details: Vec<YugabyteMemDetails> = Vec::new();
+    for (hostname_port, node_exporter_vector) in values {
+        if node_exporter_vector.iter().filter(|r| r.node_exporter_name == "generic_heap_size").count() > 0 {
+            details.push( YugabyteMemDetails {
+                hostname_port: hostname_port.to_string(),
+                timestamp: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "generic_heap_size").map(|x| x.node_exporter_timestamp).nth(0).unwrap(),
+                generic_heap_size: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "generic_heap_size").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                generic_current_allocated_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "generic_current_allocated_bytes").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                tcmalloc_pageheap_free_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "tcmalloc_pageheap_free_bytes").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                tcmalloc_current_total_thread_cache_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "tcmalloc_current_total_thread_cache_bytes").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                tcmalloc_pageheap_unmapped_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "tcmalloc_pageheap_unmapped_bytes").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                tcmalloc_max_total_thread_cache_bytes: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "tcmalloc_max_total_thread_cache_bytes").map(|x| x.node_exporter_value).nth(0).unwrap(),
+                mem_tracker_server: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "mem_tracker" && r.node_exporter_labels.contains("server")).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                mem_tracker_blockbasedtable_server: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "mem_tracker_BlockBasedTable" && r.node_exporter_labels.contains("server")).map(|x| x.node_exporter_value).nth(0).unwrap(),
+                mem_tracker_tablets_server: node_exporter_vector.iter().filter(|r| r.node_exporter_name == "mem_tracker_Tablets" && r.node_exporter_labels.contains("server")).map(|x| x.node_exporter_value).nth(0).unwrap(),
+            });
+        };
+    }
+    details
+}
+
+pub fn yugabyte_io_details(
     values: &HashMap<String, Vec<NodeExporterValues>>
 ) -> Vec<YugabyteIODetails>
 {
@@ -867,7 +919,45 @@ pub fn disk_details(
     details
 }
 
-pub fn diff_yugabyte_details(
+pub fn diff_yugabyte_mem_details(
+    values: Vec<YugabyteMemDetails>,
+    yugabyte_presentation: &mut BTreeMap<String, YBMemPresentation>,
+) {
+    for yugabyte_details in values {
+        match yugabyte_presentation.get_mut(&yugabyte_details.hostname_port) {
+            Some(row) => {
+                *row = YBMemPresentation {
+                    timestamp: yugabyte_details.timestamp,
+                    generic_heap_size: yugabyte_details.generic_heap_size,
+                    generic_current_allocated_bytes: yugabyte_details.generic_current_allocated_bytes,
+                    tcmalloc_pageheap_free_bytes: yugabyte_details.tcmalloc_pageheap_free_bytes,
+                    tcmalloc_current_total_thread_cache_bytes: yugabyte_details.tcmalloc_current_total_thread_cache_bytes,
+                    tcmalloc_pageheap_unmapped_bytes: yugabyte_details.tcmalloc_pageheap_unmapped_bytes,
+                    tcmalloc_max_total_thread_cache_bytes: yugabyte_details.tcmalloc_max_total_thread_cache_bytes,
+                    mem_tracker_server: yugabyte_details.mem_tracker_server,
+                    mem_tracker_blockbasedtable_server: yugabyte_details.mem_tracker_blockbasedtable_server,
+                    mem_tracker_tablets_server: yugabyte_details.mem_tracker_tablets_server,
+                }
+            },
+            None => {
+                yugabyte_presentation.insert( yugabyte_details.hostname_port,YBMemPresentation {
+                    timestamp: yugabyte_details.timestamp,
+                    generic_heap_size: yugabyte_details.generic_heap_size,
+                    generic_current_allocated_bytes: yugabyte_details.generic_current_allocated_bytes,
+                    tcmalloc_pageheap_free_bytes: yugabyte_details.tcmalloc_pageheap_free_bytes,
+                    tcmalloc_current_total_thread_cache_bytes: yugabyte_details.tcmalloc_current_total_thread_cache_bytes,
+                    tcmalloc_pageheap_unmapped_bytes: yugabyte_details.tcmalloc_pageheap_unmapped_bytes,
+                    tcmalloc_max_total_thread_cache_bytes: yugabyte_details.tcmalloc_max_total_thread_cache_bytes,
+                    mem_tracker_server: yugabyte_details.mem_tracker_server,
+                    mem_tracker_blockbasedtable_server: yugabyte_details.mem_tracker_blockbasedtable_server,
+                    mem_tracker_tablets_server: yugabyte_details.mem_tracker_tablets_server,
+                });
+            },
+        }
+    }
+}
+
+pub fn diff_yugabyte_io_details(
     values: Vec<YugabyteIODetails>,
     yugabyte_presentation: &mut BTreeMap<String, YBIOPresentation>,
 ) {
